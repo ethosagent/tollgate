@@ -77,3 +77,18 @@ func TestFinalizer_UnheldTerminalRegionIsCounted(t *testing.T) {
 		t.Fatalf("statusz hooks.unheld_terminals = %d, want 1", n)
 	}
 }
+
+// TestFinalizer_SeveralChoicesAreNotHeld: the barrier's terminal region and
+// recovery splice assume one choice, so a request for several (OpenAI n > 1)
+// is relayed without the barrier: unchanged and undecided.
+func TestFinalizer_SeveralChoicesAreNotHeld(t *testing.T) {
+	first := fixtureOrFail(t, wireCases[0].first)
+	f := &finalizer{fn: func(int, tollgate.StreamSummary) tollgate.Decision { return recoverDecision }}
+	base := finalizerProxy(t, tollgate.Options{}, f)
+	up := newSeqUpstream(t, first)
+	resp := post(t, base, wireCases[0].path, []byte(`{"model":"m","stream":true,"n":2,"messages":[{"role":"user","content":"hi"}]}`),
+		map[string]string{"x-upstream-url": up.srv.URL})
+	if got := readAll(t, resp); string(got) != string(first) || f.calls.Load() != 0 {
+		t.Fatalf("client bytes equal = %v, Decide calls = %d; want the stream unchanged and no Decide", string(got) == string(first), f.calls.Load())
+	}
+}

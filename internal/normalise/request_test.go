@@ -90,6 +90,23 @@ func TestParseRequest_ConversationOpenAI(t *testing.T) {
 	}
 }
 
+func TestParseRequest_Choices(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       int
+	}{
+		{"default", `{"model":"m","messages":[]}`, 0},
+		{"one", `{"model":"m","n":1,"messages":[]}`, 1},
+		{"several", `{"model":"m","n":3,"stream":true,"messages":[]}`, 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if c := parse(t, model.WireOpenAIChat, tc.body); c.Choices != tc.want {
+				t.Fatalf("Choices = %d, want %d", c.Choices, tc.want)
+			}
+		})
+	}
+}
+
 func TestParseRequest_ConversationAnthropic(t *testing.T) {
 	const body = `{"model":"m","stream":true,"system":[{"type":"text","text":"s1"},{"type":"text","text":"s2"}],"messages":[
 	 {"role":"user","content":"hi"},

@@ -90,10 +90,13 @@ type StreamSummary struct {
 
 // Finalizer holds the terminal event of a stream and decides whether to
 // release it, recover with a new upstream call, or replace the response.
-// It only sees streamed (SSE) responses; stream:false is never held. Bounded by
-// a per-finalizer budget and a global ceiling per call (Limits.FinalizerBudget,
-// Limits.RecoveryCeiling, in recovery calls), and by Limits.HookChainDeadline
-// per Decide; a panic, a missed deadline or an exceeded budget counts as Release.
+// It only sees streamed (SSE), single-choice responses: stream:false and a
+// request for several choices (Call.Choices > 1) are never held (ADR 0013).
+// Bounded by a per-finalizer budget and a global ceiling per call
+// (Limits.FinalizerBudget, Limits.RecoveryCeiling, in recovery calls), by
+// Limits.FinalizerDeadline per Decide and Limits.FinalizerCallDeadline for
+// all of a call's Decides; a panic, a missed deadline or an exceeded budget
+// counts as Release.
 type Finalizer interface {
 	Name() string
 	Decide(ctx context.Context, c *Call, s StreamSummary) Decision

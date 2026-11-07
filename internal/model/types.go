@@ -107,9 +107,13 @@ type Call struct {
 	// Path is the inbound request path, provider prefix included, e.g.
 	// "/openai/v1/chat/completions". Admission sees it before the provider is
 	// resolved; the upstream path is derived later and is not stored here.
-	Path     string
-	Model    string
-	Stream   bool
+	Path   string
+	Model  string
+	Stream bool
+	// Choices is how many alternative completions the request asks for
+	// (OpenAI "n"); 0 means the provider's default, one. A Finalizer only
+	// sees single-choice streams (ADR 0013).
+	Choices  int
 	Messages []Message
 	// Header is the inbound header set with tollgate's own and hop-by-hop
 	// headers removed. Upstream credentials are present but must never be logged.

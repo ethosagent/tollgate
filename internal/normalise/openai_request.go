@@ -39,6 +39,7 @@ func (c oaContent) text() string {
 type oaRequest struct {
 	Model    string `json:"model"`
 	Stream   bool   `json:"stream"`
+	N        int    `json:"n"`
 	Messages []struct {
 		Role             string       `json:"role"`
 		Content          oaContent    `json:"content"`
@@ -48,13 +49,14 @@ type oaRequest struct {
 	} `json:"messages"`
 }
 
-// ParseRequest fills Model, Stream and Messages from a chat.completions body.
+// ParseRequest fills Model, Stream, Choices and Messages from a
+// chat.completions body.
 func (w openAIWire) ParseRequest(body []byte, c *model.Call) error {
 	var r oaRequest
 	if err := strictDecode(body, &r); err != nil {
 		return wrapRequestErr("openai request", err)
 	}
-	c.Model, c.Stream = r.Model, r.Stream
+	c.Model, c.Stream, c.Choices = r.Model, r.Stream, r.N
 	c.Messages = make([]model.Message, 0, len(r.Messages))
 	for _, m := range r.Messages {
 		msg := model.Message{Role: openAIRole(m.Role), Text: m.Content.text(),

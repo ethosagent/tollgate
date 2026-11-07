@@ -17,11 +17,13 @@ func newFinalizers(o Options) *chain.Finalizers {
 }
 
 // finalize returns the terminal-event barrier (forward.Finalize) of one
-// streamed call, or nil: no finalizer is registered, or the call's wire has
-// no normaliser (a pass-through provider), so nothing is held. With nil the
-// stream takes the plain tee and costs nothing extra (STR-6).
+// streamed call, or nil: no finalizer is registered, the call's wire has no
+// normaliser (a pass-through provider), or it asks for several choices
+// (the terminal region and the recovery splice assume one; ADR 0013), so
+// nothing is held. With nil the stream takes the plain tee and costs
+// nothing extra (STR-6).
 func (p *Proxy) finalize(o *outcome, wire normalise.Wire) *forward.Finalize {
-	if p.fin.Empty() {
+	if p.fin.Empty() || o.call.Choices > 1 {
 		return nil
 	}
 	term, err := normalise.TerminalFor(o.call.Provider.Wire)
