@@ -3,7 +3,10 @@ package tollgate
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -11,11 +14,30 @@ import (
 	"github.com/ethosagent/tollgate/internal/resolve"
 )
 
-// wrappedAuth is a host Authenticator that embeds the built-in: it is host
-// code, so it must keep its deadline goroutine.
+// wrappedAuth embeds the built-in: it inherits InlineSafe by promotion but
+// did not declare it, so it is treated as host code and keeps its deadline.
 type wrappedAuth struct{ NoAuth }
 
-func TestBuiltinSeams_OnlyExactBuiltinsRunInline(t *testing.T) {
+// markedAuth is a host Authenticator that declares InlineSafe itself.
+type markedAuth struct{}
+
+func (markedAuth) Authenticate(context.Context, *http.Request) (Tenant, error) {
+	return Tenant{ID: "m"}, nil
+}
+func (markedAuth) InlineSafe() {}
+
+// markedResolver declares InlineSafe with a pointer receiver.
+type markedResolver struct{}
+
+func (*markedResolver) Resolve(context.Context, Tenant, *http.Request) (Provider, string, error) {
+	return Provider{}, "", errors.New("none")
+}
+func (*markedResolver) InlineSafe() {}
+
+// markedWrapper embeds a marked admission and declares nothing.
+type markedWrapper struct{ Unlimited }
+
+func TestInlineSeams_OnlyDeclaredInlineSafeRunsInline(t *testing.T) {
 	tests := []struct {
 		name string
 		opts Options
@@ -25,14 +47,43 @@ func TestBuiltinSeams_OnlyExactBuiltinsRunInline(t *testing.T) {
 		{"pointer built-ins", Options{Auth: &NoAuth{TenantID: "t"}, Admission: &Unlimited{}, Providers: resolve.New(nil)},
 			inlineSeams{auth: true, admission: true, resolver: true}},
 		{"host auth wrapping NoAuth", Options{Auth: wrappedAuth{}}, inlineSeams{admission: true, resolver: true}},
+		{"host admission wrapping Unlimited", Options{Admission: markedWrapper{}}, inlineSeams{auth: true, resolver: true}},
 		{"host admission", Options{Admission: blockingAdmission{}}, inlineSeams{auth: true, resolver: true}},
+		{"host auth declaring InlineSafe", Options{Auth: markedAuth{}}, inlineSeams{auth: true, admission: true, resolver: true}},
+		{"host auth declaring InlineSafe, by pointer", Options{Auth: &markedAuth{}}, inlineSeams{auth: true, admission: true, resolver: true}},
+		{"host resolver declaring InlineSafe", Options{Providers: &markedResolver{}}, inlineSeams{auth: true, admission: true, resolver: true}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := builtinSeams(tt.opts.withDefaults()); got != tt.want {
+			if got := inlineSeamsOf(tt.opts.withDefaults()); got != tt.want {
 				t.Fatalf("inline = %+v, want %+v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestProxy_InlineSafeHostAuthServesTheCall: a host Authenticator that
+// opts in runs inline and its tenant reaches the call (and the upstream).
+func TestProxy_InlineSafeHostAuthServesTheCall(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer up.Close()
+	base, _ := url.Parse(up.URL)
+	p, err := New(Options{Auth: markedAuth{}, Providers: resolve.New(map[string]Provider{
+		"openai": {Name: "openai", Wire: WirePassthrough, BaseURL: base},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.inline.auth {
+		t.Fatal("a host Authenticator declaring InlineSafe did not run inline")
+	}
+	r := httptest.NewRequest(http.MethodGet, "/openai/v1/models", nil)
+	w := httptest.NewRecorder()
+	p.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", w.Code, w.Body)
 	}
 }
 

@@ -112,3 +112,17 @@ type Finalizer interface {
 type HeaderConsumer interface {
 	ConsumedHeaders() []string
 }
+
+// InlineSafe is an optional marker for an Authenticator, Admission or
+// ProviderResolver whose seam method never blocks: no I/O, no wait on a
+// channel, lock, timer or context, and bounded CPU. New type-asserts it once
+// per seam; a marked extension runs on the handler's goroutine under
+// recover() but without the deadline goroutine and timer that
+// ExtensionDeadline and AdmissionDeadline otherwise cost. It counts only when
+// the extension's own type declares the method: a type that embeds a marked
+// one inherits the method but not the trust, and keeps its deadline. A
+// marked extension that blocks anyway holds the request until it returns or
+// the client goes away. See docs/decisions/0015.
+type InlineSafe interface {
+	InlineSafe()
+}

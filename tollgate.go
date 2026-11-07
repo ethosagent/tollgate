@@ -68,7 +68,7 @@ func New(opts Options) (*Proxy, error) {
 		opts:       opts,
 		reqHeaders: forward.NewHeaderFilter(append([]string{h.TenantKey, h.Session, h.UpstreamURL}, opts.consumedHeaders()...)...),
 		idPrefix:   rand.Text()[:12] + "-",
-		inline:     builtinSeams(opts),
+		inline:     inlineSeamsOf(opts),
 	}
 	p.fin = newFinalizers(opts)
 	p.chain.Store(chain.New(nil, opts.Logger, chain.Limits{Hook: opts.Limits.HookBeforeDeadline, Total: opts.Limits.HookChainDeadline}))

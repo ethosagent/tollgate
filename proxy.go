@@ -77,7 +77,7 @@ func (p *Proxy) prepare(r *http.Request, o *outcome) (req forward.Request, relea
 	return forward.Request{Method: r.Method, Target: res.target, Header: call.Header, Body: call.Body}, release, true
 }
 
-// acquire runs Admission.Acquire: inline for the built-in Unlimited, else
+// acquire runs Admission.Acquire: inline when it is InlineSafe, else
 // under AdmissionDeadline with a late grant released at once.
 func (p *Proxy) acquire(ctx context.Context, tenant Tenant, call *Call) (func(), error) {
 	fn := func(ctx context.Context) (func(), error) { return p.opts.Admission.Acquire(ctx, tenant, call) }

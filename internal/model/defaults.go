@@ -43,6 +43,9 @@ func (a NoAuth) Authenticate(context.Context, *http.Request) (Tenant, error) {
 	return Tenant{ID: cmp.Or(a.TenantID, DefaultTenantID)}, nil
 }
 
+// InlineSafe implements InlineSafe: Authenticate is a field read.
+func (NoAuth) InlineSafe() {}
+
 // Unlimited admits every call immediately.
 type Unlimited struct{}
 
@@ -50,6 +53,9 @@ type Unlimited struct{}
 func (Unlimited) Acquire(context.Context, Tenant, *Call) (func(), error) {
 	return func() {}, nil
 }
+
+// InlineSafe implements InlineSafe: Acquire returns at once.
+func (Unlimited) InlineSafe() {}
 
 // DiscardSink drops every metric.
 type DiscardSink struct{}
@@ -62,5 +68,7 @@ var (
 	_ Hook          = NoopHook{}
 	_ Authenticator = NoAuth{}
 	_ Admission     = Unlimited{}
+	_ InlineSafe    = NoAuth{}
+	_ InlineSafe    = Unlimited{}
 	_ MetricSink    = DiscardSink{}
 )

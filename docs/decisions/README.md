@@ -19,5 +19,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0012](0012-session-header-reaches-the-strategy-as-a-call-field.md) | The session header reaches the SessionStrategy as a Call field | Accepted |
 | [0013](0013-finalizers-see-single-choice-streams.md) | Finalizers see single-choice streams only | Accepted |
 | [0014](0014-fixtures-leaf-and-testkit-harness.md) | Fixtures in a leaf package; testkit's harness imports the root | Accepted |
+| [0015](0015-inline-safe-extensions-run-without-a-deadline-goroutine.md) | InlineSafe extensions run without a deadline goroutine | Accepted |
 
 Template: [`template.md`](template.md).

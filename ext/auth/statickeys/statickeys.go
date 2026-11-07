@@ -15,6 +15,7 @@ import (
 var (
 	_ tollgate.Authenticator  = (*Auth)(nil)
 	_ tollgate.HeaderConsumer = (*Auth)(nil)
+	_ tollgate.InlineSafe     = (*Auth)(nil)
 )
 
 // Tenant is what a key resolves to.
@@ -92,6 +93,11 @@ func New(cfg Config) (*Auth, error) {
 // ConsumedHeaders implements tollgate.HeaderConsumer: the key header must
 // never reach the upstream.
 func (a *Auth) ConsumedHeaders() []string { return []string{a.header} }
+
+// InlineSafe implements tollgate.InlineSafe: Authenticate hashes the key and
+// walks a fixed, in-memory list. It never blocks, so the core runs it on the
+// handler's goroutine without a deadline goroutine (ADR 0015).
+func (*Auth) InlineSafe() {}
 
 func cloneTenant(t Tenant) Tenant {
 	t.AllowedProviders = slices.Clone(t.AllowedProviders)

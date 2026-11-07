@@ -66,7 +66,7 @@ Lint (`.golangci.yml`) bans `http.DefaultClient`/`http.Get`, `log.Print*`,
 ## Non-negotiables
 
 1. **Client-first streaming.** Bytes reach the client before any hook sees them. No hook can stall, reorder or break the stream.
-2. **Isolation.** Every extension call has `recover()` and a deadline. A broken extension degrades to pass-through, never to an outage.
+2. **Isolation.** Every extension call has `recover()` and a deadline (except Auth/Admission/resolver declaring `InlineSafe`, ADR 0015). A broken extension degrades to pass-through, never to an outage.
 3. **Transparent.** Body, model and upstream credentials pass through unchanged unless an extension changes them.
 4. **Never hold provider keys.** `Authorization` / `x-api-key` are forwarded verbatim, never stored, never logged.
 5. **Privacy mode is on by default.** No transcripts, reasoning, tool payloads or raw bytes in logs.

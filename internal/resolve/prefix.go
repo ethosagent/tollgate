@@ -55,6 +55,9 @@ func (r *Resolver) Resolve(_ context.Context, _ model.Tenant, req *http.Request)
 	return p, rest, nil
 }
 
+// InlineSafe implements model.InlineSafe: Resolve is a map lookup.
+func (*Resolver) InlineSafe() {}
+
 // WireForPath guesses the wire format from the path prefix using the
 // built-in table, before any resolver has run (to shape early errors).
 // Unknown prefixes are WirePassthrough.

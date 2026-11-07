@@ -140,8 +140,8 @@ new optional interface that the core type-asserts, so old plugins compile.
 | Upstream connect / first byte / idle stream | 10 s / 60 s / 120 s |
 | Max call duration | 15 min |
 | Hook.Before deadline | 50 ms each, 200 ms chain |
-| Auth / ProviderResolver deadline | 5 s per call (`ExtensionDeadline`) |
-| Admission deadline, queue wait included | 30 s (`AdmissionDeadline`) |
+| Auth / ProviderResolver deadline | 5 s per call (`ExtensionDeadline`); none if it declares `InlineSafe` (ADR 0015) |
+| Admission deadline, queue wait included | 30 s (`AdmissionDeadline`); none if it declares `InlineSafe` |
 | Finalizer budget / recovery ceiling | 2 per finalizer / 10 per call |
 | Finalizer Decide deadline: each / all of a call (`FinalizerDeadline`, `FinalizerCallDeadline`) | 200 ms / 1 s |
 | Event buffer / metric queue | 1024 / 10 000; overflow drops + counts |

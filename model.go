@@ -44,6 +44,7 @@ type (
 	StatusError      = model.StatusError
 	RetryAfterError  = model.RetryAfterError
 	HeaderConsumer   = model.HeaderConsumer
+	InlineSafe       = model.InlineSafe
 )
 
 // Default implementations.
