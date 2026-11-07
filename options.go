@@ -42,13 +42,20 @@ type Options struct {
 
 // Limits bounds every call. A zero field takes its DefaultLimits value.
 type Limits struct {
-	MaxRequestBody      int64         // bytes, checked before parsing
-	ConnectTimeout      time.Duration // upstream dial
-	FirstByteTimeout    time.Duration // time to first upstream byte
-	IdleStreamTimeout   time.Duration // no bytes on an open stream
-	MaxCallDuration     time.Duration
-	HookBeforeDeadline  time.Duration // per Hook.Before
-	HookChainDeadline   time.Duration // all Hook.Before calls together
+	MaxRequestBody     int64         // bytes, checked before parsing
+	ConnectTimeout     time.Duration // upstream dial
+	FirstByteTimeout   time.Duration // time to first upstream byte
+	IdleStreamTimeout  time.Duration // no bytes on an open stream
+	MaxCallDuration    time.Duration
+	HookBeforeDeadline time.Duration // per Hook.Before
+	HookChainDeadline  time.Duration // all Hook.Before calls together
+	// ExtensionDeadline bounds each Authenticator and ProviderResolver call;
+	// past it the call is answered 503 and the late result is dropped.
+	ExtensionDeadline time.Duration
+	// AdmissionDeadline bounds each Admission.Acquire call, queue wait
+	// included, so keep it above the admission's own queue timeout. Past it
+	// the call is answered 503 and a slot granted late is released at once.
+	AdmissionDeadline   time.Duration
 	FinalizerBudget     int           // recovery calls per finalizer per call
 	RecoveryCeiling     int           // recovery calls per call, all finalizers
 	EventBuffer         int           // events queued for OnEvent hooks
@@ -70,6 +77,8 @@ func DefaultLimits() Limits {
 		MaxCallDuration:     15 * time.Minute,
 		HookBeforeDeadline:  50 * time.Millisecond,
 		HookChainDeadline:   200 * time.Millisecond,
+		ExtensionDeadline:   5 * time.Second,
+		AdmissionDeadline:   30 * time.Second,
 		FinalizerBudget:     2,
 		RecoveryCeiling:     10,
 		EventBuffer:         1024,
@@ -131,6 +140,8 @@ func (l Limits) withDefaults() Limits {
 	l.MaxCallDuration = cmp.Or(l.MaxCallDuration, d.MaxCallDuration)
 	l.HookBeforeDeadline = cmp.Or(l.HookBeforeDeadline, d.HookBeforeDeadline)
 	l.HookChainDeadline = cmp.Or(l.HookChainDeadline, d.HookChainDeadline)
+	l.ExtensionDeadline = cmp.Or(l.ExtensionDeadline, d.ExtensionDeadline)
+	l.AdmissionDeadline = cmp.Or(l.AdmissionDeadline, d.AdmissionDeadline)
 	l.FinalizerBudget = cmp.Or(l.FinalizerBudget, d.FinalizerBudget)
 	l.RecoveryCeiling = cmp.Or(l.RecoveryCeiling, d.RecoveryCeiling)
 	l.EventBuffer = cmp.Or(l.EventBuffer, d.EventBuffer)
@@ -183,6 +194,8 @@ func (l Limits) validate() error {
 		{"MaxCallDuration", int64(l.MaxCallDuration)},
 		{"HookBeforeDeadline", int64(l.HookBeforeDeadline)},
 		{"HookChainDeadline", int64(l.HookChainDeadline)},
+		{"ExtensionDeadline", int64(l.ExtensionDeadline)},
+		{"AdmissionDeadline", int64(l.AdmissionDeadline)},
 		{"FinalizerBudget", int64(l.FinalizerBudget)},
 		{"RecoveryCeiling", int64(l.RecoveryCeiling)},
 		{"EventBuffer", int64(l.EventBuffer)},

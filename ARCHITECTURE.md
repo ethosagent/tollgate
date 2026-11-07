@@ -104,6 +104,8 @@ new optional interface that the core type-asserts, so old plugins compile.
 | Upstream connect / first byte / idle stream | 10 s / 60 s / 120 s |
 | Max call duration | 15 min |
 | Hook.Before deadline | 50 ms each, 200 ms chain |
+| Auth / ProviderResolver deadline | 5 s per call (`ExtensionDeadline`) |
+| Admission deadline, queue wait included | 30 s (`AdmissionDeadline`) |
 | Finalizer budget / recovery ceiling | 2 per finalizer / 10 per call |
 | Event buffer / metric queue | 1024 / 10 000; overflow drops + counts |
 | Session TTL / max live sessions | 5 min / 100 000 (LRU) |
@@ -133,6 +135,7 @@ headers, hop-by-hop headers and any header an extension declares through
 | Client disconnect (incl. during an admission wait) | upstream request cancelled via context; nothing written | `client_cancel` |
 | Deadline hit | provider-shaped timeout error | `timeout` |
 | Auth/Admission/resolver panic | recovered; provider-shaped 500; logged with seam, tenant, call id | `rejected` |
+| Auth/Admission/resolver past its deadline | provider-shaped 503; logged as above; a slot granted late is released | `rejected` |
 | Hook panic/timeout | logged with tenant + call id; hook skipped; call proceeds | unchanged |
 | Sink down | metrics dropped and counted; `/readyz` fails after N consecutive failures | unchanged |
 
@@ -150,7 +153,7 @@ Extension errors map to a status through one contract (ADR 0008): a
 The body message is fixed per status; no extension or transport error text
 reaches the client. Core errors: override not allowed 403, bad override 400,
 body too large 413, bad resolver target 502, upstream unreachable 502, timed
-out 504, extension panic 500.
+out 504, extension panic 500, extension past its deadline 503.
 
 Endpoints served by the core: `ANY /{provider}/*`, `GET /healthz`,
 `GET /readyz`; later `GET /statusz` (host-only) and `GET /metrics` (optional).

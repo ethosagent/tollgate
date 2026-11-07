@@ -2,6 +2,7 @@ package tollgate
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -32,7 +33,7 @@ type outcome struct {
 // check, body cap, then forward and relay, with the hook chain around the
 // forward when hooks are registered. Sessions and metrics are added by later
 // milestones (ARCHITECTURE.md section 4). Every extension call runs under
-// chain.Guard; extension errors map to a status through model.StatusOf (ADR 0008).
+// chain.Within (recover plus a Limits deadline); extension errors map to a status through model.StatusOf (ADR 0008).
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 	chn := p.newChain() // the hooks of this call: later Use calls do not join it
 	o := &outcome{start: time.Now(), callID: p.nextCallID(), finish: FinishOK,
@@ -55,7 +56,8 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 // prepare runs the steps before the upstream call. ok is false when the
 // request was answered; release, if not nil, must be called when the call ends.
 func (p *Proxy) prepare(w http.ResponseWriter, r *http.Request, o *outcome) (call *Call, req forward.Request, release func(), ok bool) {
-	tenant, err := chain.Guard(r.Context(), func(ctx context.Context) (Tenant, error) {
+	l := p.opts.Limits
+	tenant, err := chain.Within(r.Context(), l.ExtensionDeadline, func(ctx context.Context) (Tenant, error) {
 		return p.opts.Auth.Authenticate(ctx, r)
 	})
 	if err != nil {
@@ -64,9 +66,10 @@ func (p *Proxy) prepare(w http.ResponseWriter, r *http.Request, o *outcome) (cal
 	}
 	o.tenant = tenant.ID
 	call = &Call{ID: o.callID, Tenant: tenant, Path: r.URL.Path, Header: p.reqHeaders.Filter(r.Header), Meta: map[string]any{}}
-	release, err = chain.Guard(r.Context(), func(ctx context.Context) (func(), error) {
-		return p.opts.Admission.Acquire(ctx, tenant, call)
-	})
+	admitted := call // a late Acquire must not read the named result, which returns rewrite
+	release, err = chain.WithinLate(r.Context(), l.AdmissionDeadline, func(ctx context.Context) (func(), error) {
+		return p.opts.Admission.Acquire(ctx, tenant, admitted)
+	}, releaseLate)
 	if err != nil {
 		if !chain.IsPanic(err) {
 			w.Header().Set("Retry-After", strconv.Itoa(model.RetryAfterSeconds(err)))
@@ -74,7 +77,7 @@ func (p *Proxy) prepare(w http.ResponseWriter, r *http.Request, o *outcome) (cal
 		p.fail(w, r, o, "admission", err, http.StatusTooManyRequests)
 		return nil, req, nil, false
 	}
-	res, err := chain.Guard(r.Context(), func(ctx context.Context) (resolved, error) {
+	res, err := chain.Within(r.Context(), l.ExtensionDeadline, func(ctx context.Context) (resolved, error) {
 		return p.resolve(ctx, r, tenant)
 	})
 	if err != nil {
@@ -92,6 +95,14 @@ func (p *Proxy) prepare(w http.ResponseWriter, r *http.Request, o *outcome) (cal
 		return nil, req, release, false
 	}
 	return call, forward.Request{Method: r.Method, Target: res.target, Header: call.Header, Body: call.Body}, release, true
+}
+
+// releaseLate frees a slot an Admission granted after its deadline: the call
+// was already answered 503 and must not hold it.
+func releaseLate(release func(), _ error) {
+	if release != nil {
+		_, _ = chain.Guard(context.Background(), func(context.Context) (struct{}, error) { release(); return struct{}{}, nil })
+	}
 }
 
 // resolved is the ProviderResolver's answer plus the checked upstream URL.
@@ -117,17 +128,24 @@ func (p *Proxy) target(r *http.Request, t Tenant, prov Provider, rest string) (*
 	return forward.Target(prov.BaseURL, override, allow, r.URL, rest)
 }
 
-// fail answers an extension error. A panic is logged with metadata only and
-// answered 500. An error that arrives after the client left (a queue wait
-// cut short) writes nothing and is recorded as client_cancel, not as a
-// rejection.
+// fail answers an extension error. A panic (500) or a missed deadline (503)
+// is logged with metadata only. An error that arrives after the client left
+// (a queue wait cut short) writes nothing and is recorded as client_cancel,
+// not as a rejection.
 func (p *Proxy) fail(w http.ResponseWriter, r *http.Request, o *outcome, seam string, err error, fallback int) {
-	if chain.IsPanic(err) {
-		p.opts.Logger.LogAttrs(context.WithoutCancel(r.Context()), slog.LevelError, "extension panicked",
-			slog.String("seam", seam), slog.String("call_id", o.callID), slog.String("tenant", o.tenant))
-	} else if r.Context().Err() != nil {
+	msg := ""
+	switch {
+	case chain.IsPanic(err):
+		msg = "extension panicked"
+	case r.Context().Err() != nil:
 		o.finish = FinishClientCancel
 		return
+	case errors.Is(err, chain.ErrDeadline):
+		msg = "extension timed out"
+	}
+	if msg != "" {
+		p.opts.Logger.LogAttrs(context.WithoutCancel(r.Context()), slog.LevelError, msg,
+			slog.String("seam", seam), slog.String("call_id", o.callID), slog.String("tenant", o.tenant))
 	}
 	p.reject(w, o, model.StatusOf(err, fallback))
 }
