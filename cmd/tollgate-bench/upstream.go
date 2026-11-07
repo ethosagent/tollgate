@@ -144,28 +144,25 @@ func (u *fakeClient) sync(ctx context.Context) (origin time.Time, bound time.Dur
 }
 
 // readClock returns the fake's clock: nanoseconds since its origin.
-func (u *fakeClient) readClock(ctx context.Context) (now int64, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.control("clock"), nil)
-	if err != nil {
-		return 0, err
-	}
-	return now, u.decode(req, &now)
+func (u *fakeClient) readClock(ctx context.Context) (int64, error) {
+	return getJSON[int64](ctx, u, "clock")
 }
 
 // readRecords returns what the fake recorded, on its own clock.
-func (u *fakeClient) readRecords(ctx context.Context) (recs []record, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.control("records"), nil)
-	if err != nil {
-		return nil, err
-	}
-	return recs, u.decode(req, &recs)
+func (u *fakeClient) readRecords(ctx context.Context) ([]record, error) {
+	return getJSON[[]record](ctx, u, "records")
 }
 
-func (u *fakeClient) decode(req *http.Request, v any) error {
+// getJSON decodes the JSON the control server's endpoint returns.
+func getJSON[T any](ctx context.Context, u *fakeClient, endpoint string) (v T, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.control(endpoint), nil)
+	if err != nil {
+		return v, err
+	}
 	resp, err := u.client.Do(req)
 	if err != nil {
-		return err
+		return v, err
 	}
 	defer resp.Body.Close()
-	return json.NewDecoder(resp.Body).Decode(v)
+	return v, json.NewDecoder(resp.Body).Decode(&v)
 }
