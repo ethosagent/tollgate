@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/ethosagent/tollgate/internal/model"
@@ -153,4 +155,35 @@ func TestBarrier_FinalizerGetsPrivateCopies(t *testing.T) {
 	if string(call.Body) != "orig" || call.Meta["k"] != "v" || sum.ToolCalls[0].Arguments[0] != '{' {
 		t.Fatal("a finalizer wrote through to the call or the summary")
 	}
+}
+
+// TestBarrier_TotalDecideTimeIsBounded: each Decide gets at most
+// Limits.Decide, and all Decide calls of one call together at most
+// Limits.Total, recovery rounds included; once spent, the barrier releases
+// without asking (STR-4, STR-7).
+func TestBarrier_TotalDecideTimeIsBounded(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var n atomic.Int32
+		waits := fin{name: "waits", decide: func(ctx context.Context, _ *model.Call, _ model.StreamSummary) model.Decision {
+			n.Add(1)
+			<-ctx.Done() // a finalizer that always uses its whole deadline
+			return recoverBody
+		}}
+		b, logs := newBarrier(t, FinalizeLimits{Decide: 100 * time.Millisecond, Total: 250 * time.Millisecond, Budget: 5, Ceiling: 5},
+			waits, waits, waits)
+		start := time.Now()
+		if got := b.Decide(context.Background(), model.StreamSummary{}); got.Action != model.DecisionRelease {
+			t.Fatalf("decision %+v, want release", got)
+		}
+		if took := time.Since(start); took != 250*time.Millisecond || n.Load() != 3 {
+			t.Fatalf("first round took %v with %d calls, want exactly the 250ms total over 3 calls", took, n.Load())
+		}
+		start = time.Now()
+		if got := b.Decide(context.Background(), model.StreamSummary{}); got.Action != model.DecisionRelease || time.Since(start) != 0 || n.Load() != 3 {
+			t.Fatalf("second round: %+v after %v and %d calls; want an immediate release, no finalizer asked", got, time.Since(start), n.Load())
+		}
+		if !strings.Contains(logs.String(), "reason="+reasonFinalizeDeadline) {
+			t.Fatalf("logs %q, want the spent budget logged", logs.String())
+		}
+	})
 }

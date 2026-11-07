@@ -67,14 +67,19 @@ type Limits struct {
 	// AdmissionDeadline bounds each Admission.Acquire call, queue wait
 	// included, so keep it above the admission's own queue timeout. Past it
 	// the call is answered 503 and a slot granted late is released at once.
-	AdmissionDeadline   time.Duration
-	FinalizerBudget     int           // recovery calls per finalizer per call
-	RecoveryCeiling     int           // recovery calls per call, all finalizers
-	EventBuffer         int           // events queued for OnEvent hooks
-	MetricQueue         int           // metrics queued for the sink
-	MetricBatch         int           // largest batch handed to MetricSink.Write (capped at MetricQueue)
-	MetricFlushInterval time.Duration // longest a metric waits before a partial batch is written
-	MetricWriteTimeout  time.Duration // deadline of one MetricSink.Write; past it the write counts as failed
+	AdmissionDeadline time.Duration
+	FinalizerDeadline time.Duration // per Finalizer.Decide
+	// FinalizerCallDeadline bounds every Decide of one call together,
+	// recovery rounds included: the longest a terminal event is held for
+	// decisions. Once spent, the barrier releases without asking.
+	FinalizerCallDeadline time.Duration
+	FinalizerBudget       int           // recovery calls per finalizer per call
+	RecoveryCeiling       int           // recovery calls per call, all finalizers
+	EventBuffer           int           // events queued for OnEvent hooks
+	MetricQueue           int           // metrics queued for the sink
+	MetricBatch           int           // largest batch handed to MetricSink.Write (capped at MetricQueue)
+	MetricFlushInterval   time.Duration // longest a metric waits before a partial batch is written
+	MetricWriteTimeout    time.Duration // deadline of one MetricSink.Write; past it the write counts as failed
 	// MetricFailAfter is how many consecutive failed sink writes (error,
 	// panic or timeout) make /readyz answer 503; one success makes it ready.
 	MetricFailAfter     int
@@ -88,29 +93,31 @@ type Limits struct {
 // DefaultLimits returns the limits a zero Limits field falls back to.
 func DefaultLimits() Limits {
 	return Limits{
-		MaxRequestBody:      16 << 20,
-		MaxResponseCopy:     1 << 20,
-		ConnectTimeout:      10 * time.Second,
-		FirstByteTimeout:    60 * time.Second,
-		IdleStreamTimeout:   120 * time.Second,
-		MaxCallDuration:     15 * time.Minute,
-		HookBeforeDeadline:  50 * time.Millisecond,
-		HookChainDeadline:   200 * time.Millisecond,
-		ExtensionDeadline:   5 * time.Second,
-		AdmissionDeadline:   30 * time.Second,
-		FinalizerBudget:     2,
-		RecoveryCeiling:     10,
-		EventBuffer:         1024,
-		MetricQueue:         10_000,
-		MetricBatch:         500,
-		MetricFlushInterval: time.Second,
-		MetricWriteTimeout:  10 * time.Second,
-		MetricFailAfter:     3,
-		SessionTTL:          5 * time.Minute,
-		MaxSessions:         100_000,
-		MaxConnsPerHost:     100,
-		MaxIdleConnsPerHost: 20,
-		IdleConnTimeout:     30 * time.Second,
+		MaxRequestBody:        16 << 20,
+		MaxResponseCopy:       1 << 20,
+		ConnectTimeout:        10 * time.Second,
+		FirstByteTimeout:      60 * time.Second,
+		IdleStreamTimeout:     120 * time.Second,
+		MaxCallDuration:       15 * time.Minute,
+		HookBeforeDeadline:    50 * time.Millisecond,
+		HookChainDeadline:     200 * time.Millisecond,
+		ExtensionDeadline:     5 * time.Second,
+		AdmissionDeadline:     30 * time.Second,
+		FinalizerDeadline:     200 * time.Millisecond,
+		FinalizerCallDeadline: time.Second,
+		FinalizerBudget:       2,
+		RecoveryCeiling:       10,
+		EventBuffer:           1024,
+		MetricQueue:           10_000,
+		MetricBatch:           500,
+		MetricFlushInterval:   time.Second,
+		MetricWriteTimeout:    10 * time.Second,
+		MetricFailAfter:       3,
+		SessionTTL:            5 * time.Minute,
+		MaxSessions:           100_000,
+		MaxConnsPerHost:       100,
+		MaxIdleConnsPerHost:   20,
+		IdleConnTimeout:       30 * time.Second,
 	}
 }
 
@@ -166,6 +173,8 @@ func (l Limits) withDefaults() Limits {
 	l.HookChainDeadline = cmp.Or(l.HookChainDeadline, d.HookChainDeadline)
 	l.ExtensionDeadline = cmp.Or(l.ExtensionDeadline, d.ExtensionDeadline)
 	l.AdmissionDeadline = cmp.Or(l.AdmissionDeadline, d.AdmissionDeadline)
+	l.FinalizerDeadline = cmp.Or(l.FinalizerDeadline, d.FinalizerDeadline)
+	l.FinalizerCallDeadline = cmp.Or(l.FinalizerCallDeadline, d.FinalizerCallDeadline)
 	l.FinalizerBudget = cmp.Or(l.FinalizerBudget, d.FinalizerBudget)
 	l.RecoveryCeiling = cmp.Or(l.RecoveryCeiling, d.RecoveryCeiling)
 	l.EventBuffer = cmp.Or(l.EventBuffer, d.EventBuffer)
@@ -198,6 +207,9 @@ func (o Options) Validate() error {
 	if o.Limits.HookBeforeDeadline > o.Limits.HookChainDeadline {
 		errs = append(errs, errors.New("limits: HookBeforeDeadline exceeds HookChainDeadline"))
 	}
+	if o.Limits.FinalizerDeadline > o.Limits.FinalizerCallDeadline {
+		errs = append(errs, errors.New("limits: FinalizerDeadline exceeds FinalizerCallDeadline"))
+	}
 	if o.Limits.FinalizerBudget > o.Limits.RecoveryCeiling {
 		errs = append(errs, errors.New("limits: FinalizerBudget exceeds RecoveryCeiling"))
 	}
@@ -225,6 +237,8 @@ func (l Limits) validate() error {
 		{"HookChainDeadline", int64(l.HookChainDeadline)},
 		{"ExtensionDeadline", int64(l.ExtensionDeadline)},
 		{"AdmissionDeadline", int64(l.AdmissionDeadline)},
+		{"FinalizerDeadline", int64(l.FinalizerDeadline)},
+		{"FinalizerCallDeadline", int64(l.FinalizerCallDeadline)},
 		{"FinalizerBudget", int64(l.FinalizerBudget)},
 		{"RecoveryCeiling", int64(l.RecoveryCeiling)},
 		{"EventBuffer", int64(l.EventBuffer)},

@@ -11,7 +11,8 @@ import (
 
 // FinalizeLimits bound the Finalizer seam (Options.Limits).
 type FinalizeLimits struct {
-	Decide  time.Duration // one Decide call (HookChainDeadline)
+	Decide  time.Duration // one Decide call (FinalizerDeadline)
+	Total   time.Duration // every Decide call of one call together (FinalizerCallDeadline); 0 is no cap
 	Budget  int           // recoveries one finalizer may start per call (FinalizerBudget)
 	Ceiling int           // recoveries per call, all finalizers (RecoveryCeiling)
 }
@@ -44,6 +45,7 @@ type Barrier struct {
 	call  *model.Call
 	used  []int // recoveries per finalizer
 	total int
+	until time.Time // the Total budget ends; set by the first Decide
 }
 
 // Begin starts the barrier of one call. call is read-only from here on.
@@ -58,9 +60,24 @@ func (f *Finalizers) Begin(call *model.Call) *Barrier {
 // call's ceiling allows, or answers with a malformed decision counts as
 // having released, and the next one is asked. If none acts the result is a
 // Release. Each finalizer gets private copies of the call and the summary.
+//
+// Every Decide of the call, recovery rounds included, shares Limits.Total:
+// a finalizer gets the smaller of Limits.Decide and what is left, and once
+// it is spent the barrier releases without asking, so the terminal event is
+// never held longer than Total in all.
 func (b *Barrier) Decide(ctx context.Context, s model.StreamSummary) model.Decision {
+	if b.until.IsZero() && b.f.lim.Total > 0 {
+		b.until = time.Now().Add(b.f.lim.Total)
+	}
 	for i, fz := range b.f.list {
-		d, err := Within(ctx, b.f.lim.Decide, func(ctx context.Context) (model.Decision, error) {
+		limit := b.f.lim.Decide
+		if !b.until.IsZero() {
+			if limit = min(limit, time.Until(b.until)); limit <= 0 {
+				b.f.skip(ctx, b.call, fz, reasonFinalizeDeadline)
+				break
+			}
+		}
+		d, err := Within(ctx, limit, func(ctx context.Context) (model.Decision, error) {
 			cp := cloneCall(b.call)
 			return fz.Decide(ctx, &cp, cloneSummary(s)), nil
 		})

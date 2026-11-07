@@ -7,11 +7,13 @@ import (
 )
 
 // newFinalizers builds the Finalizer list of a Proxy from validated Options.
-// Decide runs under Limits.HookChainDeadline; FinalizerBudget and
-// RecoveryCeiling count recovery calls per finalizer and per call.
+// Each Decide runs under Limits.FinalizerDeadline and all of a call's under
+// FinalizerCallDeadline; FinalizerBudget and RecoveryCeiling count recovery
+// calls per finalizer and per call.
 func newFinalizers(o Options) *chain.Finalizers {
+	l := o.Limits
 	return chain.NewFinalizers(o.Finalizers, o.Logger, chain.FinalizeLimits{
-		Decide: o.Limits.HookChainDeadline, Budget: o.Limits.FinalizerBudget, Ceiling: o.Limits.RecoveryCeiling})
+		Decide: l.FinalizerDeadline, Total: l.FinalizerCallDeadline, Budget: l.FinalizerBudget, Ceiling: l.RecoveryCeiling})
 }
 
 // finalize returns the terminal-event barrier (forward.Finalize) of one

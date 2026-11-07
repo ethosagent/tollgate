@@ -63,6 +63,8 @@ const (
 	reasonTimeout    = "timeout"
 	reasonDeadline   = "chain_deadline"
 	reasonClientGone = "client_gone"
+	// reasonFinalizeDeadline: the call's total Decide time is spent.
+	reasonFinalizeDeadline = "finalize_deadline"
 )
 
 // stageEndReason says why a stage's context ended: the client left
