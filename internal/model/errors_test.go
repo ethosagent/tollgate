@@ -49,3 +49,25 @@ func TestRetryAfterOf(t *testing.T) {
 		t.Fatal("plain error reported a retry delay")
 	}
 }
+
+func TestRetryAfterSeconds(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"no hint is 1", errors.New("x"), 1},
+		{"rounds up", retryAfterErr(2500 * time.Millisecond), 3},
+		{"never below 1", retryAfterErr(time.Millisecond), 1},
+	}
+	for _, tt := range tests {
+		if got := RetryAfterSeconds(tt.err); got != tt.want {
+			t.Errorf("%s: %d, want %d", tt.name, got, tt.want)
+		}
+	}
+}
+
+type retryAfterErr time.Duration
+
+func (e retryAfterErr) Error() string             { return "busy" }
+func (e retryAfterErr) RetryAfter() time.Duration { return time.Duration(e) }

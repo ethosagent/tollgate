@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"hash/maphash"
+	"maps"
 	"net/http"
 	"sync"
 	"time"
@@ -16,7 +18,8 @@ var _ tollgate.Admission = (*Limiter)(nil)
 // defaultRetryAfter is the Retry-After hint when Config.RetryAfter is zero.
 const defaultRetryAfter = time.Second
 
-// Config configures New.
+// Config configures New. New copies it, so changing cfg (or its PerTenant
+// map) afterwards has no effect.
 type Config struct {
 	DefaultMax   int            // max in-flight calls per tenant; required, > 0
 	PerTenant    map[string]int // tenant ID -> max in-flight, overrides DefaultMax
@@ -24,10 +27,20 @@ type Config struct {
 	RetryAfter   time.Duration  // Retry-After hint on rejection; 0 means 1s
 }
 
-// Limiter is a tollgate.Admission that caps in-flight calls per tenant.
-type Limiter struct {
-	cfg Config
+// shardCount splits the tenant table so concurrent calls of different
+// tenants rarely share a lock (HOT-6). A power of two keeps the modulo cheap.
+const shardCount = 64
 
+// Limiter is a tollgate.Admission that caps in-flight calls per tenant. It
+// is safe for concurrent use.
+type Limiter struct {
+	cfg    Config
+	seed   maphash.Seed
+	shards [shardCount]shard
+}
+
+// shard owns the buckets of the tenants that hash to it.
+type shard struct {
 	mu      sync.Mutex
 	buckets map[string]*bucket
 }
@@ -65,7 +78,12 @@ func New(cfg Config) (*Limiter, error) {
 	if cfg.RetryAfter == 0 {
 		cfg.RetryAfter = defaultRetryAfter
 	}
-	return &Limiter{cfg: cfg, buckets: make(map[string]*bucket)}, nil
+	cfg.PerTenant = maps.Clone(cfg.PerTenant)
+	l := &Limiter{cfg: cfg, seed: maphash.MakeSeed()}
+	for i := range l.shards {
+		l.shards[i].buckets = make(map[string]*bucket)
+	}
+	return l, nil
 }
 
 // Acquire takes one slot for the tenant, waiting up to QueueTimeout or until
@@ -108,27 +126,33 @@ func (l *Limiter) wait(ctx context.Context, b *bucket) error {
 	}
 }
 
+func (l *Limiter) shardOf(id string) *shard {
+	return &l.shards[maphash.String(l.seed, id)%shardCount]
+}
+
 func (l *Limiter) enter(id string) *bucket {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b, ok := l.buckets[id]
+	sh := l.shardOf(id)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	b, ok := sh.buckets[id]
 	if !ok {
 		limit := l.cfg.DefaultMax
 		if n, ok := l.cfg.PerTenant[id]; ok {
 			limit = n
 		}
 		b = &bucket{sem: make(chan struct{}, limit)}
-		l.buckets[id] = b
+		sh.buckets[id] = b
 	}
 	b.refs++
 	return b
 }
 
 func (l *Limiter) leave(id string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	b := l.buckets[id]
+	sh := l.shardOf(id)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	b := sh.buckets[id]
 	if b.refs--; b.refs == 0 {
-		delete(l.buckets, id)
+		delete(sh.buckets, id)
 	}
 }

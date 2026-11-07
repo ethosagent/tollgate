@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"math"
 	"time"
 )
 
@@ -44,4 +45,14 @@ func RetryAfterOf(err error) (time.Duration, bool) {
 		return re.RetryAfter(), true
 	}
 	return 0, false
+}
+
+// RetryAfterSeconds is the Retry-After value for an Admission error: the
+// RetryAfterError delay in whole seconds, rounded up, at least 1.
+func RetryAfterSeconds(err error) int {
+	secs := 1
+	if d, ok := RetryAfterOf(err); ok {
+		secs = max(secs, int(math.Ceil(d.Seconds())))
+	}
+	return secs
 }

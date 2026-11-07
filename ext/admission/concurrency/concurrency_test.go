@@ -3,9 +3,11 @@ package concurrency
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -132,9 +134,13 @@ func TestAcquire_PerTenantOverridesAndIsolation(t *testing.T) {
 func TestLimiter_ForgetsIdleTenants(t *testing.T) {
 	l := newLimiter(t, Config{DefaultMax: 1})
 	acquire(t, l, "a")()
-	l.mu.Lock()
-	n := len(l.buckets)
-	l.mu.Unlock()
+	n := 0
+	for i := range l.shards {
+		sh := &l.shards[i]
+		sh.mu.Lock()
+		n += len(sh.buckets)
+		sh.mu.Unlock()
+	}
 	if n != 0 {
 		t.Fatalf("%d idle buckets retained", n)
 	}
@@ -200,4 +206,40 @@ func TestLimiterError_Message(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "concurrency") {
 		t.Fatalf("err = %v", err)
 	}
+}
+
+func TestNew_CopiesPerTenant(t *testing.T) {
+	per := map[string]int{"a": 1}
+	l, err := New(Config{DefaultMax: 5, PerTenant: per})
+	if err != nil {
+		t.Fatal(err)
+	}
+	per["a"] = 5
+	if _, err := l.Acquire(context.Background(), tollgate.Tenant{ID: "a"}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Acquire(context.Background(), tollgate.Tenant{ID: "a"}, nil); err == nil {
+		t.Fatal("limit follows a PerTenant map mutated after New")
+	}
+}
+
+// BenchmarkAcquireRelease runs acquire+release for many tenants in parallel:
+// the per-call path must not serialise on one process-wide lock (HOT-6).
+func BenchmarkAcquireRelease(b *testing.B) {
+	l, err := New(Config{DefaultMax: 1 << 20})
+	if err != nil {
+		b.Fatal(err)
+	}
+	var next atomic.Int64
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		t := tollgate.Tenant{ID: fmt.Sprintf("tenant-%d", next.Add(1))}
+		for pb.Next() {
+			release, err := l.Acquire(context.Background(), t, nil)
+			if err != nil {
+				b.Fatal(err)
+			}
+			release()
+		}
+	})
 }

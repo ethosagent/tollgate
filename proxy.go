@@ -3,13 +3,13 @@ package tollgate
 import (
 	"context"
 	"log/slog"
-	"math"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/ethosagent/tollgate/internal/chain"
 	"github.com/ethosagent/tollgate/internal/forward"
 	"github.com/ethosagent/tollgate/internal/model"
 	"github.com/ethosagent/tollgate/internal/normalise"
@@ -31,31 +31,38 @@ type outcome struct {
 // serveProxy runs the transparent pass-through pipeline: Auth, Admission,
 // ProviderResolver, target check, body cap, forward and relay. Normalising,
 // sessions, hooks and metrics are added by later milestones
-// (ARCHITECTURE.md section 4). Extension errors map to a status through
-// model.StatusOf (ADR 0008).
+// (ARCHITECTURE.md section 4). Every extension call runs under chain.Guard;
+// extension errors map to a status through model.StatusOf (ADR 0008).
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 	o := &outcome{start: time.Now(), callID: p.nextCallID(), finish: FinishOK,
 		shape: normalise.ShapeForWire(resolve.WireForPath(r.URL.Path))}
 	defer p.logCall(r.Context(), o)
 
-	tenant, err := p.opts.Auth.Authenticate(r.Context(), r)
+	tenant, err := chain.Guard(func() (Tenant, error) { return p.opts.Auth.Authenticate(r.Context(), r) })
 	if err != nil {
-		p.reject(w, o, model.StatusOf(err, http.StatusUnauthorized))
+		p.fail(w, r, o, "auth", err, http.StatusUnauthorized)
 		return
 	}
 	o.tenant = tenant.ID
 	call := &Call{ID: o.callID, Tenant: tenant, Path: r.URL.Path, Header: p.reqHeaders.Filter(r.Header)}
-	release, err := p.opts.Admission.Acquire(r.Context(), tenant, call)
+	release, err := chain.Guard(func() (func(), error) { return p.opts.Admission.Acquire(r.Context(), tenant, call) })
 	if err != nil {
-		w.Header().Set("Retry-After", retryAfter(err))
-		p.reject(w, o, model.StatusOf(err, http.StatusTooManyRequests))
+		if !chain.IsPanic(err) {
+			w.Header().Set("Retry-After", strconv.Itoa(model.RetryAfterSeconds(err)))
+		}
+		p.fail(w, r, o, "admission", err, http.StatusTooManyRequests)
 		return
 	}
 	if release != nil {
 		defer release()
 	}
-	target, err := p.target(r, tenant, o)
+	res, err := chain.Guard(func() (resolved, error) { return p.resolve(r, tenant) })
 	if err != nil {
+		p.fail(w, r, o, "resolver", err, http.StatusNotFound)
+		return
+	}
+	o.provider, o.shape = res.prov.Name, normalise.ShapeForWire(res.prov.Wire)
+	if res.target, err = p.target(r, tenant, res.prov, res.rest); err != nil {
 		p.reject(w, o, model.StatusOf(err, http.StatusNotFound))
 		return
 	}
@@ -64,23 +71,45 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 		p.reject(w, o, model.StatusOf(err, http.StatusBadRequest))
 		return
 	}
-	p.forward(w, r, o, forward.Request{Method: r.Method, Target: target, Header: call.Header, Body: body})
+	p.forward(w, r, o, forward.Request{Method: r.Method, Target: res.target, Header: call.Header, Body: body})
 }
 
-// target resolves the provider and returns the checked upstream URL. The
-// override header is applied here for every resolver (ADR 0007).
-func (p *Proxy) target(r *http.Request, t Tenant, o *outcome) (*url.URL, error) {
+// resolved is the ProviderResolver's answer plus the checked upstream URL.
+type resolved struct {
+	prov   Provider
+	rest   string
+	target *url.URL
+}
+
+func (p *Proxy) resolve(r *http.Request, t Tenant) (resolved, error) {
 	prov, rest, err := p.opts.Providers.Resolve(r.Context(), t, r)
-	if err != nil {
-		return nil, err
-	}
-	o.provider, o.shape = prov.Name, normalise.ShapeForWire(prov.Wire)
+	return resolved{prov: prov, rest: rest}, err
+}
+
+// target returns the checked upstream URL. The override header is applied
+// here for every resolver (ADR 0007).
+func (p *Proxy) target(r *http.Request, t Tenant, prov Provider, rest string) (*url.URL, error) {
 	var allow []string
 	if t.Policy != nil {
 		allow = t.Policy.AllowedUpstreams
 	}
 	override := strings.TrimSpace(r.Header.Get(p.opts.Headers.UpstreamURL))
 	return forward.Target(prov.BaseURL, override, allow, r.URL, rest)
+}
+
+// fail answers an extension error. A panic is logged with metadata only and
+// answered 500. An error that arrives after the client left (a queue wait
+// cut short) writes nothing and is recorded as client_cancel, not as a
+// rejection.
+func (p *Proxy) fail(w http.ResponseWriter, r *http.Request, o *outcome, seam string, err error, fallback int) {
+	if chain.IsPanic(err) {
+		p.opts.Logger.LogAttrs(context.WithoutCancel(r.Context()), slog.LevelError, "extension panicked",
+			slog.String("seam", seam), slog.String("call_id", o.callID), slog.String("tenant", o.tenant))
+	} else if r.Context().Err() != nil {
+		o.finish = FinishClientCancel
+		return
+	}
+	p.reject(w, o, model.StatusOf(err, fallback))
 }
 
 // forward runs the upstream call under the stream limits (first byte, idle,
@@ -125,13 +154,4 @@ func (p *Proxy) logCall(ctx context.Context, o *outcome) {
 // a crypto read per call.
 func (p *Proxy) nextCallID() string {
 	return p.idPrefix + strconv.FormatUint(p.callSeq.Add(1), 36)
-}
-
-// retryAfter is the Retry-After value in whole seconds, rounded up, at least 1.
-func retryAfter(err error) string {
-	secs := 1
-	if d, ok := model.RetryAfterOf(err); ok {
-		secs = max(secs, int(math.Ceil(d.Seconds())))
-	}
-	return strconv.Itoa(secs)
 }
