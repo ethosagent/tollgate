@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -39,6 +40,12 @@ type Request struct {
 	Body     []byte
 	Fixture  string // the fixture chosen for it ("" if none matched)
 	Canceled bool   // the client went away before the response finished
+	// Received is when the fake's handler got the request (headers read).
+	Received time.Time
+	// ChunksWritten holds, per chunk sent, when it was written and flushed.
+	// With Received it lets a test or tool time what sits in front of the
+	// fake (a proxy) on the fake's side, free of its own delays.
+	ChunksWritten []time.Time
 }
 
 // FakeUpstream is an httptest server that replays recorded provider responses.
@@ -83,17 +90,22 @@ func (f *FakeUpstream) Client() *http.Client { return f.srv.Client() }
 func (f *FakeUpstream) Requests() []Request {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]Request(nil), f.reqs...)
+	out := append([]Request(nil), f.reqs...)
+	for i := range out {
+		out[i].ChunksWritten = slices.Clone(out[i].ChunksWritten)
+	}
+	return out
 }
 
 func (f *FakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
+	received := time.Now()
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxRecordedBody))
 	name := r.Header.Get(FixtureHeader)
 	if name == "" {
 		name = defaultFixture(r.URL.Path, body)
 	}
-	chunks := Chunks(name)
-	idx := f.record(r, body, name, chunks != nil)
+	chunks := replayable()[name]
+	idx := f.record(r, received, body, name, chunks != nil)
 	if chunks == nil {
 		http.Error(w, "testkit: no fixture for "+r.URL.Path+" "+name, http.StatusNotFound)
 		return
@@ -125,6 +137,7 @@ func (f *FakeUpstream) writeChunks(ctx context.Context, w http.ResponseWriter, i
 		if flusher != nil {
 			flusher.Flush()
 		}
+		f.stampWrite(idx)
 	}
 }
 
@@ -135,7 +148,7 @@ func (f *FakeUpstream) status(name string) int {
 	return fixtures.Status(name)
 }
 
-func (f *FakeUpstream) record(r *http.Request, body []byte, name string, found bool) int {
+func (f *FakeUpstream) record(r *http.Request, at time.Time, body []byte, name string, found bool) int {
 	if !found {
 		name = ""
 	}
@@ -148,8 +161,16 @@ func (f *FakeUpstream) record(r *http.Request, body []byte, name string, found b
 		Header:   r.Header.Clone(),
 		Body:     body,
 		Fixture:  name,
+		Received: at,
 	})
 	return len(f.reqs) - 1
+}
+
+func (f *FakeUpstream) stampWrite(idx int) {
+	now := time.Now()
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reqs[idx].ChunksWritten = append(f.reqs[idx].ChunksWritten, now)
 }
 
 func (f *FakeUpstream) markCanceled(idx int) {
@@ -157,6 +178,17 @@ func (f *FakeUpstream) markCanceled(idx int) {
 	defer f.mu.Unlock()
 	f.reqs[idx].Canceled = true
 }
+
+// replayable maps every fixture name to its chunks, split once. The fake
+// replays only what is in it: a request header selects an entry, it never
+// names data.
+var replayable = sync.OnceValue(func() map[string][][]byte {
+	m := map[string][][]byte{}
+	for _, n := range fixtures.Names() {
+		m[n] = fixtures.Chunks(n)
+	}
+	return m
+})
 
 // defaultFixture picks a fixture from the path and the body's stream flag.
 func defaultFixture(path string, body []byte) string {
