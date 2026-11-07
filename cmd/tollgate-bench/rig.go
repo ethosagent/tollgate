@@ -9,7 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/ethosagent/tollgate"
@@ -17,13 +17,18 @@ import (
 	"github.com/ethosagent/tollgate/testkit"
 )
 
+// callHeader carries the id that ties a client call to its upstream record.
+// tollgate forwards it untouched, like any header it does not own.
+const callHeader = "x-bench-call"
+
 // rig is the system under measurement: a fake upstream, a tollgate in front
-// of it with a real metric sink, and an admin listener for /statusz.
+// of it with a real metric sink (its work is part of the cost), and the time
+// the proxy's listener handed each call to tollgate.
 type rig struct {
-	cfg      config
 	fake     *testkit.FakeUpstream
 	proxy    *tollgate.Proxy
 	proxyURL string
+	arrived  sync.Map // call id -> time.Time the proxy's handler was entered
 	stops    []func()
 }
 
@@ -35,9 +40,11 @@ func (benchAuth) Authenticate(context.Context, *http.Request) (tollgate.Tenant, 
 	return tollgate.Tenant{ID: "bench", Policy: &tollgate.Policy{AllowedUpstreams: []string{"127.0.0.0/8"}}}, nil
 }
 
-func newRig(ctx context.Context, cfg config) (*rig, error) {
-	r := &rig{cfg: cfg}
-	fake, stopFake := testkit.NewServer(testkit.Options{ChunkDelay: cfg.chunkDelay})
+// newRig starts a fake upstream with the given chunk delay and a proxy for
+// sessions concurrent streams.
+func newRig(ctx context.Context, sessions int, chunkDelay time.Duration) (*rig, error) {
+	r := &rig{}
+	fake, stopFake := testkit.NewServer(testkit.Options{ChunkDelay: chunkDelay})
 	r.fake = fake
 	r.stops = append(r.stops, stopFake)
 	// The default MaxConnsPerHost (100) would queue calls and measure the cap,
@@ -45,7 +52,7 @@ func newRig(ctx context.Context, cfg config) (*rig, error) {
 	p, err := tollgate.New(tollgate.Options{
 		Auth:    benchAuth{},
 		Metrics: stdout.New(io.Discard),
-		Limits:  tollgate.Limits{MaxConnsPerHost: 2 * cfg.sessions, MaxIdleConnsPerHost: cfg.sessions},
+		Limits:  tollgate.Limits{MaxConnsPerHost: 2 * sessions, MaxIdleConnsPerHost: sessions},
 	})
 	if err != nil {
 		r.stop()
@@ -56,14 +63,26 @@ func newRig(ctx context.Context, cfg config) (*rig, error) {
 		r.stop()
 		return nil, fmt.Errorf("start: %w", err)
 	}
-	if r.proxyURL, err = r.listen(ctx, p.Handler()); err != nil {
+	r.stops = append(r.stops, func() { _ = p.Close(context.WithoutCancel(ctx)) }) // after drops, a second Close is a no-op
+	if r.proxyURL, err = r.listen(ctx, r.stamp(p.Handler())); err != nil {
 		r.stop()
 		return nil, err
 	}
 	return r, nil
 }
 
-// listen serves h on a loopback port and returns its base URL.
+// stamp records when each call reached tollgate's handler.
+func (r *rig) stamp(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if id := req.Header.Get(callHeader); id != "" {
+			r.arrived.Store(id, time.Now())
+		}
+		next.ServeHTTP(w, req)
+	})
+}
+
+// listen serves h on a loopback port and returns its base URL. A plain
+// http.Server rather than httptest, for its ReadHeaderTimeout.
 func (r *rig) listen(ctx context.Context, h http.Handler) (string, error) {
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
 	if err != nil {
@@ -83,25 +102,40 @@ func (r *rig) stop() {
 	r.stops = nil
 }
 
-// target is where one phase sends its calls.
+// target is where a call is sent.
 type target struct {
 	url     string // full URL of the call
 	headers map[string]string
 }
 
-func (r *rig) directTarget() target {
-	return target{url: r.fake.URL + testkit.PathFor(r.cfg.fixture), headers: map[string]string{testkit.FixtureHeader: r.cfg.fixture}}
+func (r *rig) directTarget(fixture string) target {
+	return target{url: r.fake.URL + testkit.PathFor(fixture), headers: map[string]string{testkit.FixtureHeader: fixture}}
 }
 
-func (r *rig) proxyTarget() target {
-	provider := "openai"
-	if strings.HasPrefix(r.cfg.fixture, "anthropic/") {
-		provider = "anthropic"
-	}
-	return target{url: r.proxyURL + "/" + provider + testkit.PathFor(r.cfg.fixture), headers: map[string]string{
-		testkit.FixtureHeader: r.cfg.fixture,
+func (r *rig) proxyTarget(fixture string) target {
+	provider, _ := testkit.RequestFor(fixture)
+	return target{url: r.proxyURL + "/" + provider + testkit.PathFor(fixture), headers: map[string]string{
+		testkit.FixtureHeader: fixture,
 		"x-upstream-url":      r.fake.URL,
 	}}
+}
+
+// upstreamSide returns, by call id, what the fake recorded for each call.
+func (r *rig) upstreamSide() map[string]testkit.Request {
+	out := map[string]testkit.Request{}
+	for _, q := range r.fake.Requests() {
+		out[q.Header.Get(callHeader)] = q
+	}
+	return out
+}
+
+// proxyArrival is when the proxy's handler got call id.
+func (r *rig) proxyArrival(id string) (time.Time, bool) {
+	v, ok := r.arrived.Load(id)
+	if !ok {
+		return time.Time{}, false
+	}
+	return v.(time.Time), true
 }
 
 // drops closes the proxy (flushing the sink) and reads /statusz from its

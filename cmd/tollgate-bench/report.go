@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// v1AddedP99 is the v1 target for the latency tollgate adds (plan/000).
+const v1AddedP99 = time.Millisecond
+
 // latency is p50 and p99, in milliseconds, of the two times measured per call.
 type latency struct {
 	TTFBP50  float64 `json:"ttfb_p50_ms"`
@@ -16,9 +19,26 @@ type latency struct {
 	TotalP99 float64 `json:"total_p99_ms"`
 }
 
-// memory is bytes per open stream for the whole process (client, fake
-// upstream and, for the proxied phase, tollgate), so Added is the proxy's share.
+// overhead is what the proxy adds, from paired calls and the fake upstream's
+// own timestamps, so the fake's chunk delays are not part of it.
+type overhead struct {
+	TTFBAddedP50  float64 `json:"ttfb_added_p50_ms"` // per pair: proxied minus direct time to first byte
+	TTFBAddedP99  float64 `json:"ttfb_added_p99_ms"`
+	ChunkAddedP50 float64 `json:"chunk_added_p50_ms"` // per chunk: proxied minus direct upstream-write -> client
+	ChunkAddedP99 float64 `json:"chunk_added_p99_ms"`
+	ForwardP50    float64 `json:"forward_p50_ms"` // proxy got the request -> upstream got it
+	ForwardP99    float64 `json:"forward_p99_ms"`
+	Pairs         int     `json:"pairs"`
+	Chunks        int     `json:"chunks"`
+	MeetsV1       bool    `json:"meets_v1_added_p99_under_1ms"`
+}
+
+// memory is live bytes per open stream for the whole process (client, fake
+// upstream and, proxied, tollgate), so Added is tollgate's share.
 type memory struct {
+	HoldChunkDelay       string  `json:"hold_chunk_delay"`
+	DirectStreams        int64   `json:"direct_streams"`
+	ProxyStreams         int64   `json:"proxy_streams"`
 	DirectBytesPerStream float64 `json:"direct_bytes_per_stream"`
 	ProxyBytesPerStream  float64 `json:"proxy_bytes_per_stream"`
 	AddedBytesPerStream  float64 `json:"added_bytes_per_stream"`
@@ -38,16 +58,15 @@ type dropCounters struct {
 type report struct {
 	Fixture         string       `json:"fixture"`
 	Sessions        int          `json:"sessions"`
-	CallsPerSession int          `json:"calls_per_session"`
-	TotalCalls      int          `json:"total_calls"`  // measured, per phase
-	WarmupCalls     int          `json:"warmup_calls"` // unmeasured, per phase: one per session
+	CallsPerSession int          `json:"calls_per_session"` // measured pairs per session
+	TotalCalls      int          `json:"total_calls"`       // measured, per path
+	WarmupCalls     int          `json:"warmup_calls"`      // unmeasured, per path: one per session
 	ChunkDelay      string       `json:"chunk_delay"`
-	Direct          latency      `json:"direct"`
+	Direct          latency      `json:"direct"` // end to end, includes the fake's delays
 	Proxy           latency      `json:"proxy"`
-	Added           latency      `json:"added"`
+	Overhead        overhead     `json:"overhead"`
 	PeakStreams     int64        `json:"peak_concurrent_streams"`
 	Memory          memory       `json:"memory"`
-	Errors          int          `json:"errors"`
 	Statusz         dropCounters `json:"statusz"`
 }
 
@@ -62,27 +81,23 @@ func percentile(ds []time.Duration, p float64) time.Duration {
 	return s[min(max(rank, 0), len(s)-1)]
 }
 
-func ms(d time.Duration) float64 { return float64(d) / float64(time.Millisecond) }
+func ms(d time.Duration) float64 { return math.Round(float64(d)/float64(time.Microsecond)) / 1000 }
 
-func latencyOf(p phase) latency {
+func latencyOf(ttfb, total []time.Duration) latency {
 	return latency{
-		TTFBP50: ms(percentile(p.ttfb, 0.5)), TTFBP99: ms(percentile(p.ttfb, 0.99)),
-		TotalP50: ms(percentile(p.total, 0.5)), TotalP99: ms(percentile(p.total, 0.99)),
+		TTFBP50: ms(percentile(ttfb, 0.5)), TTFBP99: ms(percentile(ttfb, 0.99)),
+		TotalP50: ms(percentile(total, 0.5)), TotalP99: ms(percentile(total, 0.99)),
 	}
 }
 
-func buildReport(cfg config, direct, proxied phase, drops dropCounters) report {
-	d, p := latencyOf(direct), latencyOf(proxied)
-	return report{
-		Fixture: cfg.fixture, Sessions: cfg.sessions, CallsPerSession: cfg.calls,
-		TotalCalls: cfg.sessions * cfg.calls, WarmupCalls: proxied.warmup, ChunkDelay: cfg.chunkDelay.String(),
-		Direct: d, Proxy: p,
-		Added:       latency{p.TTFBP50 - d.TTFBP50, p.TTFBP99 - d.TTFBP99, p.TotalP50 - d.TotalP50, p.TotalP99 - d.TotalP99},
-		PeakStreams: proxied.peakStreams,
-		Memory: memory{DirectBytesPerStream: direct.bytesPerStream, ProxyBytesPerStream: proxied.bytesPerStream,
-			AddedBytesPerStream: proxied.bytesPerStream - direct.bytesPerStream},
-		Errors:  direct.errors + proxied.errors,
-		Statusz: drops,
+func overheadOf(t timings) overhead {
+	ttfb99, chunk99 := percentile(t.ttfbAdded, 0.99), percentile(t.chunkAdded, 0.99)
+	return overhead{
+		TTFBAddedP50: ms(percentile(t.ttfbAdded, 0.5)), TTFBAddedP99: ms(ttfb99),
+		ChunkAddedP50: ms(percentile(t.chunkAdded, 0.5)), ChunkAddedP99: ms(chunk99),
+		ForwardP50: ms(percentile(t.forward, 0.5)), ForwardP99: ms(percentile(t.forward, 0.99)),
+		Pairs: len(t.ttfbAdded), Chunks: len(t.chunkAdded),
+		MeetsV1: len(t.ttfbAdded) > 0 && ttfb99 < v1AddedP99 && chunk99 < v1AddedP99,
 	}
 }
 
@@ -95,16 +110,23 @@ func writeTable(w io.Writer, r report) error {
 		}
 	}
 	pr("tollgate-bench  fixture=%s  sessions=%d  calls/session=%d  chunk-delay=%s\n\n", r.Fixture, r.Sessions, r.CallsPerSession, r.ChunkDelay)
-	pr("%-18s %10s %10s %10s\n", "", "direct", "proxy", "added")
-	row := func(name string, d, p, a float64) { pr("%-18s %10.3f %10.3f %+10.3f\n", name, d, p, a) }
-	row("ttfb p50 (ms)", r.Direct.TTFBP50, r.Proxy.TTFBP50, r.Added.TTFBP50)
-	row("ttfb p99 (ms)", r.Direct.TTFBP99, r.Proxy.TTFBP99, r.Added.TTFBP99)
-	row("total p50 (ms)", r.Direct.TotalP50, r.Proxy.TotalP50, r.Added.TotalP50)
-	row("total p99 (ms)", r.Direct.TotalP99, r.Proxy.TotalP99, r.Added.TotalP99)
-	pr("\npeak concurrent streams: %d\n", r.PeakStreams)
-	pr("bytes per open stream: direct %.0f, proxy %.0f, added %.0f\n", r.Memory.DirectBytesPerStream, r.Memory.ProxyBytesPerStream, r.Memory.AddedBytesPerStream)
+	pr("end to end (ms)    %10s %10s\n", "direct", "proxy")
+	row := func(name string, d, p float64) { pr("%-18s %10.3f %10.3f\n", name, d, p) }
+	row("ttfb p50", r.Direct.TTFBP50, r.Proxy.TTFBP50)
+	row("ttfb p99", r.Direct.TTFBP99, r.Proxy.TTFBP99)
+	row("total p50", r.Direct.TotalP50, r.Proxy.TotalP50)
+	row("total p99", r.Direct.TotalP99, r.Proxy.TotalP99)
+	o := r.Overhead
+	pr("\nadded by the proxy (ms, paired, upstream-stamped)  p50 / p99\n")
+	pr("  time to first byte   %8.3f / %8.3f   (%d pairs)\n", o.TTFBAddedP50, o.TTFBAddedP99, o.Pairs)
+	pr("  per chunk            %8.3f / %8.3f   (%d chunks)\n", o.ChunkAddedP50, o.ChunkAddedP99, o.Chunks)
+	pr("  request forward      %8.3f / %8.3f\n", o.ForwardP50, o.ForwardP99)
+	pr("  v1 target (added p99 < 1 ms): %t\n", o.MeetsV1)
+	m := r.Memory
+	pr("\nbytes per open stream (hold %s): direct %.0f (%d streams), proxy %.0f (%d streams), added %.0f\n",
+		m.HoldChunkDelay, m.DirectBytesPerStream, m.DirectStreams, m.ProxyBytesPerStream, m.ProxyStreams, m.AddedBytesPerStream)
+	pr("peak concurrent streams (latency pass): %d\n", r.PeakStreams)
 	pr("dropped: metrics %d, events %d, sink errors %d, closed sessions %d (calls seen %d, metrics written %d)\n",
 		r.Statusz.MetricsDropped, r.Statusz.EventsDropped, r.Statusz.SinkErrors, r.Statusz.SessionsClosedDropped, r.Statusz.Calls, r.Statusz.MetricsWritten)
-	pr("errors: %d\n", r.Errors)
 	return err
 }

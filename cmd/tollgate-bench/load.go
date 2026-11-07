@@ -3,146 +3,163 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
-	"runtime"
-	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/ethosagent/tollgate/testkit"
 )
 
-// phase is what one target (the fake directly, or through the proxy) measured.
-type phase struct {
-	ttfb, total    []time.Duration // one entry per successful measured call
-	errors         int             // failed measured calls
-	warmup         int             // unmeasured calls that opened the connections
-	peakStreams    int64           // most responses open at once
-	bytesPerStream float64         // (live memory - baseline) / streams open when it was read; whole process; 0 if not measurable
+// sample is one call as the client saw it.
+type sample struct {
+	id     string      // callHeader value, unique per call
+	start  time.Time   // just before the request was sent
+	chunks []time.Time // when each fixture chunk had fully arrived
 }
 
-// loader makes the calls of one phase.
+// pair is one direct and one proxied call made back to back by one session.
+type pair struct{ direct, proxy sample }
+
+// loader makes calls for one fixture and counts the streams open at once.
 type loader struct {
-	cfg    config
-	tg     target
-	body   []byte
-	client *http.Client
-	open   atomic.Int64
-	peak   atomic.Int64
+	fixture string
+	body    []byte
+	want    [][]byte // the fixture's chunks: what every call must return
+	client  *http.Client
+	open    atomic.Int64 // calls that have their first chunk and are not done
+	peak    atomic.Int64
 }
 
-// measure runs one warm-up call per session, then -calls calls per session,
-// all sessions at once, against tg. Latency covers only the measured calls
-// (connections are already open); memory covers both, from a fresh baseline,
-// so the connections a stream needs are counted.
-func measure(ctx context.Context, cfg config, tg target) (phase, error) {
-	tr := &http.Transport{MaxIdleConnsPerHost: cfg.sessions, DisableCompression: true}
-	defer tr.CloseIdleConnections()
-	l := &loader{cfg: cfg, tg: tg, body: requestBody(cfg.fixture), client: &http.Client{Transport: tr}}
-	runtime.GC()
-	base := heapInUse()
-	stopMem, deepest := sampleMemory(l.open.Load)
-	warm := l.fire(ctx, 1)
-	res := l.fire(ctx, cfg.calls)
-	stopMem()
+func newLoader(fixture string, sessions int) *loader {
+	_, body := testkit.RequestFor(fixture)
+	tr := &http.Transport{MaxIdleConnsPerHost: 2 * sessions, DisableCompression: true}
+	return &loader{fixture: fixture, body: body, want: testkit.Chunks(fixture), client: &http.Client{Transport: tr}}
+}
+
+func (l *loader) close() { l.client.CloseIdleConnections() }
+
+// pairs runs, in each of sessions concurrent sessions, n rounds of one direct
+// and one proxied call on that session's warm connections. Odd rounds go
+// proxy first, so neither path always runs on the other's heels.
+func (l *loader) pairs(ctx context.Context, r *rig, sessions, n int, tag string) ([]pair, error) {
+	var (
+		mu   sync.Mutex
+		out  []pair
+		errs []error
+		wg   sync.WaitGroup
+	)
+	direct, proxied := r.directTarget(l.fixture), r.proxyTarget(l.fixture)
+	for s := range sessions {
+		wg.Go(func() {
+			for k := 0; k < n && ctx.Err() == nil; k++ {
+				id := fmt.Sprintf("%s-s%d-r%d", tag, s, k)
+				p, err := l.pair(ctx, direct, proxied, id, k%2 == 1)
+				mu.Lock()
+				if err != nil {
+					errs = append(errs, err)
+				} else {
+					out = append(out, p)
+				}
+				mu.Unlock()
+			}
+		})
+	}
+	wg.Wait()
 	if err := ctx.Err(); err != nil {
-		return phase{}, err
+		return nil, err
 	}
-	p := phase{warmup: cfg.sessions, peakStreams: l.peak.Load(), errors: res.errors + warm.errors}
-	p.ttfb, p.total = res.ttfb, res.total
-	if mem, streams := deepest(); streams > 0 && mem > base {
-		p.bytesPerStream = math.Round(float64(mem-base) / float64(streams))
+	if len(errs) > 0 {
+		return out, fmt.Errorf("%d call(s) failed, first: %w", len(errs), errs[0])
 	}
-	return p, firstError(warm, res)
+	return out, nil
 }
 
-// batch is the outcome of one round of calls.
-type batch struct {
-	ttfb, total []time.Duration
-	errors      int
-	err         error // the first failure, for the message
+func (l *loader) pair(ctx context.Context, direct, proxied target, id string, proxyFirst bool) (pair, error) {
+	var p pair
+	first, second := &p.direct, &p.proxy
+	ft, st := direct, proxied
+	if proxyFirst {
+		first, second, ft, st = second, first, st, ft
+	}
+	var err1, err2 error
+	*first, err1 = l.call(ctx, ft, id+"-"+tagOf(ft, proxied))
+	*second, err2 = l.call(ctx, st, id+"-"+tagOf(st, proxied))
+	return p, errors.Join(err1, err2)
 }
 
-func firstError(bs ...batch) error {
-	for _, b := range bs {
-		if b.errors > 0 {
-			return fmt.Errorf("%d call(s) failed, first: %w", b.errors, b.err)
+func tagOf(t, proxied target) string {
+	if t.url == proxied.url {
+		return "p"
+	}
+	return "d"
+}
+
+// call makes one call, stamping the arrival of each fixture chunk, and
+// checks the body is the fixture byte for byte.
+func (l *loader) call(ctx context.Context, tg target, id string) (sample, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, tg.url, bytes.NewReader(l.body))
+	if err != nil {
+		return sample{}, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-session-id", id)
+	req.Header.Set(callHeader, id)
+	for k, v := range tg.headers {
+		req.Header.Set(k, v)
+	}
+	s := sample{id: id, start: time.Now(), chunks: make([]time.Time, 0, len(l.want))}
+	resp, err := l.client.Do(req)
+	if err != nil {
+		return s, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return s, fmt.Errorf("%s: status %d", id, resp.StatusCode)
+	}
+	return s, l.read(resp.Body, &s)
+}
+
+// read consumes the body chunk by chunk, as the fixture was written. The
+// call counts as an open stream from its first chunk to its end.
+func (l *loader) read(body io.Reader, s *sample) error {
+	buf := make([]byte, 0, 4096)
+	if err := l.readChunk(body, s, &buf, 0); err != nil {
+		return err
+	}
+	l.opened()
+	defer l.open.Add(-1)
+	for i := 1; i < len(l.want); i++ {
+		if err := l.readChunk(body, s, &buf, i); err != nil {
+			return err
 		}
+	}
+	if n, _ := io.Copy(io.Discard, body); n > 0 {
+		return fmt.Errorf("%s: %d bytes after the fixture's end", s.id, n)
 	}
 	return nil
 }
 
-// fire runs n sequential calls in each of cfg.sessions concurrent sessions.
-func (l *loader) fire(ctx context.Context, n int) batch {
-	parts := make([]batch, l.cfg.sessions)
-	var wg sync.WaitGroup
-	for s := range parts {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for range n {
-				if ctx.Err() != nil {
-					return
-				}
-				ttfb, total, err := l.call(ctx, "bench-"+strconv.Itoa(s))
-				if err != nil {
-					parts[s].errors++
-					parts[s].err = err
-					continue
-				}
-				parts[s].ttfb = append(parts[s].ttfb, ttfb)
-				parts[s].total = append(parts[s].total, total)
-			}
-		}()
+func (l *loader) readChunk(body io.Reader, s *sample, buf *[]byte, i int) error {
+	want := l.want[i]
+	if cap(*buf) < len(want) {
+		*buf = make([]byte, len(want))
 	}
-	wg.Wait()
-	var out batch
-	for _, p := range parts {
-		out.ttfb, out.total = append(out.ttfb, p.ttfb...), append(out.total, p.total...)
-		if p.errors > 0 {
-			out.errors += p.errors
-			out.err = p.err
-		}
+	b := (*buf)[:len(want)]
+	if _, err := io.ReadFull(body, b); err != nil {
+		return fmt.Errorf("%s: chunk %d: %w", s.id, i, err)
 	}
-	return out
+	s.chunks = append(s.chunks, time.Now())
+	if !bytes.Equal(b, want) {
+		return fmt.Errorf("%s: chunk %d differs from the fixture", s.id, i)
+	}
+	return nil
 }
 
-// call makes one streamed call and times the first body byte and the end.
-func (l *loader) call(ctx context.Context, session string) (ttfb, total time.Duration, err error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, l.tg.url, bytes.NewReader(l.body))
-	if err != nil {
-		return 0, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-session-id", session)
-	for k, v := range l.tg.headers {
-		req.Header.Set(k, v)
-	}
-	start := time.Now()
-	resp, err := l.client.Do(req)
-	if err != nil {
-		return 0, 0, err
-	}
-	l.opened()
-	defer func() { _ = resp.Body.Close(); l.open.Add(-1) }()
-	var first [1]byte
-	if _, err = io.ReadFull(resp.Body, first[:]); err != nil {
-		return 0, 0, fmt.Errorf("status %d: %w", resp.StatusCode, err)
-	}
-	ttfb = time.Since(start)
-	if _, err = io.Copy(io.Discard, resp.Body); err != nil {
-		return 0, 0, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		return 0, 0, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	return ttfb, time.Since(start), nil
-}
-
-// opened counts one more open response and raises the peak.
+// opened counts one more open stream and raises the peak.
 func (l *loader) opened() {
 	n := l.open.Add(1)
 	for {
@@ -151,52 +168,4 @@ func (l *loader) opened() {
 			return
 		}
 	}
-}
-
-// requestBody is a streamed (or buffered) chat request in the fixture's wire format.
-func requestBody(fixture string) []byte {
-	stream := !strings.HasSuffix(fixture, "/chat") && !strings.HasSuffix(fixture, "/messages") && !strings.Contains(fixture, "/error-")
-	if strings.HasPrefix(fixture, "anthropic/") {
-		return fmt.Appendf(nil, `{"model":"claude-sonnet-4-5","max_tokens":256,"stream":%t,"messages":[{"role":"user","content":"Say hello."}]}`, stream)
-	}
-	return fmt.Appendf(nil, `{"model":"gpt-4.1-mini","stream":%t,"messages":[{"role":"system","content":"You are a coding agent."},{"role":"user","content":"Say hello."}]}`, stream)
-}
-
-// heapInUse is live heap plus goroutine stacks, the memory a stream can add.
-func heapInUse() uint64 {
-	var m runtime.MemStats
-	runtime.ReadMemStats(&m)
-	return m.HeapAlloc + m.StackInuse
-}
-
-// sampleMemory watches the number of open streams (open) and, each time it
-// reaches a new high, collects garbage and reads the live memory, so the
-// figure is what the streams hold rather than what is waiting to be freed.
-// stop ends the watch; deepest returns the memory read at the highest count
-// seen and that count. Streams that open and close between two ticks (5ms)
-// are missed, so the figure means most with -chunk-delay holding them open.
-func sampleMemory(open func() int64) (stop func(), deepest func() (mem uint64, streams int64)) {
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	var mem uint64
-	var best int64
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		t := time.NewTicker(5 * time.Millisecond)
-		defer t.Stop()
-		for {
-			if n := open(); n > best {
-				best = n
-				runtime.GC()
-				mem = heapInUse()
-			}
-			select {
-			case <-done:
-				return
-			case <-t.C:
-			}
-		}
-	}()
-	return func() { close(done); wg.Wait() }, func() (uint64, int64) { return mem, best }
 }

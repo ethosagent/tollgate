@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime"
 	"strings"
 	"time"
 
@@ -40,7 +41,7 @@ func parseFlags(args []string) (config, error) {
 	fs.SetOutput(io.Discard)
 	fs.IntVar(&c.sessions, "sessions", 50, "concurrent sessions")
 	fs.IntVar(&c.calls, "calls", 4, "sequential calls per session")
-	fs.StringVar(&c.fixture, "fixture", "openai/chat-stream-text", "testkit fixture the fake upstream replays (see testkit.FixtureNames)")
+	fs.StringVar(&c.fixture, "fixture", "openai/chat-stream-text", "testkit response fixture the fake upstream replays (see testkit.FixtureNames); must answer 200")
 	fs.DurationVar(&c.chunkDelay, "chunk-delay", 0, "fake upstream delay between stream chunks; holds streams open")
 	fs.BoolVar(&c.json, "json", false, "print one JSON document instead of a table")
 	if err := fs.Parse(args); err != nil {
@@ -53,45 +54,64 @@ func parseFlags(args []string) (config, error) {
 		return c, errors.New("-calls must be at least 1")
 	case c.chunkDelay < 0:
 		return c, errors.New("-chunk-delay must not be negative")
-	case testkit.Chunks(c.fixture) == nil || strings.Contains(c.fixture, "/request-"):
-		return c, fmt.Errorf("unknown fixture %q (a response fixture from testkit.FixtureNames)", c.fixture)
+	case testkit.Chunks(c.fixture) == nil || strings.Contains(c.fixture, "/request-") || strings.Contains(c.fixture, "/error-"):
+		return c, fmt.Errorf("unknown fixture %q (a 200 response fixture from testkit.FixtureNames)", c.fixture)
 	}
 	return c, nil
 }
 
-// run measures the direct and proxied phases and writes the report to out.
+// run measures latency (paired, on one rig), then memory (on its own rig),
+// and writes the report to out.
 func run(ctx context.Context, args []string, out io.Writer) error {
 	cfg, err := parseFlags(args)
 	if err != nil {
 		return err
 	}
-	r, err := newRig(ctx, cfg)
+	rep, err := measure(ctx, cfg)
 	if err != nil {
 		return err
 	}
-	defer r.stop()
-	// Burn-in: the first pass pays for cold code, caches and the Go runtime's
-	// growth, which would otherwise make whichever phase runs first look slow.
-	if _, err = measure(ctx, cfg, r.directTarget()); err != nil {
+	if rep.Memory, err = memoryPass(ctx, cfg); err != nil {
 		return err
 	}
-	direct, err := measure(ctx, cfg, r.directTarget())
-	if err != nil {
-		return err
-	}
-	proxied, err := measure(ctx, cfg, r.proxyTarget())
-	if err != nil {
-		return err
-	}
-	drops, err := r.drops(ctx)
-	if err != nil {
-		return err
-	}
-	rep := buildReport(cfg, direct, proxied, drops)
 	if cfg.json {
 		enc := json.NewEncoder(out)
 		enc.SetIndent("", "  ")
 		return enc.Encode(rep)
 	}
 	return writeTable(out, rep)
+}
+
+// measure runs one warm-up pair per session (both paths, discarded), then
+// -calls measured pairs per session, and reads the drop counters.
+func measure(ctx context.Context, cfg config) (report, error) {
+	r, err := newRig(ctx, cfg.sessions, cfg.chunkDelay)
+	if err != nil {
+		return report{}, err
+	}
+	defer r.stop()
+	l := newLoader(cfg.fixture, cfg.sessions)
+	defer l.close()
+	if _, err := l.pairs(ctx, r, cfg.sessions, 1, "warm"); err != nil {
+		return report{}, err
+	}
+	runtime.GC() // start the timed pass from a clean heap; nothing forces a GC inside it
+	pairs, err := l.pairs(ctx, r, cfg.sessions, cfg.calls, "run")
+	if err != nil {
+		return report{}, err
+	}
+	t, err := analyse(pairs, r.upstreamSide(), r.proxyArrival)
+	if err != nil {
+		return report{}, err
+	}
+	drops, err := r.drops(ctx)
+	if err != nil {
+		return report{}, err
+	}
+	return report{
+		Fixture: cfg.fixture, Sessions: cfg.sessions, CallsPerSession: cfg.calls,
+		TotalCalls: len(pairs), WarmupCalls: cfg.sessions, ChunkDelay: cfg.chunkDelay.String(),
+		Direct: latencyOf(t.directTTFB, t.directTotal), Proxy: latencyOf(t.proxyTTFB, t.proxyTotal),
+		Overhead: overheadOf(t), PeakStreams: l.peak.Load(), Statusz: drops,
+	}, nil
 }

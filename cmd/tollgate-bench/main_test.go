@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ethosagent/tollgate/testkit"
 )
 
 func TestRun_JSONReport(t *testing.T) {
@@ -19,8 +21,16 @@ func TestRun_JSONReport(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &r); err != nil {
 		t.Fatalf("output is not one JSON document: %v\n%s", err, out.String())
 	}
-	if r.TotalCalls != 12 || r.Errors != 0 {
-		t.Fatalf("calls = %d errors = %d, want 12 and 0", r.TotalCalls, r.Errors)
+	if r.TotalCalls != 12 {
+		t.Fatalf("calls = %d, want 12 measured pairs", r.TotalCalls)
+	}
+	chunks := len(testkit.Chunks("openai/chat-stream-text"))
+	if o := r.Overhead; o.Pairs != 12 || o.Chunks != 12*chunks || o.ForwardP50 <= 0 || o.ForwardP99 < o.ForwardP50 ||
+		o.TTFBAddedP99 < o.TTFBAddedP50 || o.ChunkAddedP99 < o.ChunkAddedP50 {
+		t.Fatalf("overhead = %+v, want 12 pairs, %d chunks, ordered percentiles and a positive forward time", o, 12*chunks)
+	}
+	if m := r.Memory; m.DirectStreams != 4 || m.ProxyStreams != 4 || m.ProxyBytesPerStream <= 0 {
+		t.Fatalf("memory = %+v, want all 4 streams held open on both paths", m)
 	}
 	if r.Direct.TTFBP50 <= 0 || r.Proxy.TotalP99 < r.Proxy.TotalP50 || r.Proxy.TTFBP99 < r.Proxy.TTFBP50 {
 		t.Fatalf("latencies are not ordered: direct %+v proxy %+v", r.Direct, r.Proxy)
@@ -41,7 +51,7 @@ func TestRun_TableReport(t *testing.T) {
 	if err := run(context.Background(), []string{"-sessions", "2", "-calls", "2"}, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"direct", "proxy", "added", "ttfb p50", "bytes per open stream", "dropped"} {
+	for _, want := range []string{"direct", "proxy", "added by the proxy", "ttfb p50", "per chunk", "v1 target", "bytes per open stream", "dropped"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("table lacks %q:\n%s", want, out.String())
 		}
@@ -58,6 +68,7 @@ func TestRun_RejectsBadFlags(t *testing.T) {
 		{"no calls", []string{"-calls", "0"}, "-calls"},
 		{"unknown fixture", []string{"-fixture", "openai/nope"}, "unknown fixture"},
 		{"a request input is no response", []string{"-fixture", "openai/request-chat-stream"}, "unknown fixture"},
+		{"an error fixture never answers 200", []string{"-fixture", "openai/error-429"}, "unknown fixture"},
 		{"negative delay", []string{"-chunk-delay", "-1s"}, "-chunk-delay"},
 		{"unknown flag", []string{"-wat"}, "wat"},
 	}

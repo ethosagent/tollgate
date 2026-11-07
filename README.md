@@ -93,11 +93,13 @@ go run ./cmd/tollgate-bench -sessions 200 -calls 4 -fixture openai/chat-stream-t
 go run ./cmd/tollgate-bench -sessions 50 -calls 4 -json
 ```
 
-Runs concurrent sessions straight at the fake upstream and then through an
-in-process tollgate, and prints p50/p99 time to first byte and total time for
-both, the added latency, bytes per open stream (use `-chunk-delay` to hold
-streams open) and the drop counters from `/statusz`. One process over
-loopback: compare runs on the same machine, not across machines.
+Each session makes pairs of calls on warm connections, one straight at the
+fake upstream and one through an in-process tollgate. The fake stamps when it
+received each request and wrote each chunk, so the added latency (p50/p99, to
+first byte and per chunk) excludes the fake's own delays and is valid with
+`-chunk-delay`. Memory per open stream is read in a separate pass with every
+stream held open. Also printed: end-to-end times and the drop counters from
+`/statusz`. One process over loopback: compare runs on the same machine.
 
 ## Develop
 
