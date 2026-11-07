@@ -10,63 +10,61 @@ import (
 	"runtime/pprof"
 )
 
-// profiles are the dev-only profile outputs of the latency pass. Each path,
-// when set, receives one pprof file covering the timed pass only (warm-up
-// and the memory pass excluded).
+// profiles are the dev-only pprof outputs, all written to one directory
+// when -profile is set: cpu, allocs (with allocs.before, for pprof
+// -diff_base), block and mutex cover the timed pass only (warm-up and the
+// memory pass excluded); heap is the live heap while the memory pass holds
+// every proxied stream open.
 type profiles struct {
-	cpu, mem, block, mutex string
-	heap                   string // memory pass: live heap with every proxied stream open
+	dir string
 }
 
-// Block and mutex sampling rates while a profile is on: one blocking event
-// per 10µs blocked, one in 5 contended mutex events. They are off otherwise.
+// Block and mutex sampling rates while profiling: one blocking event per
+// 10µs blocked, one in 5 contended mutex events. They are off otherwise.
 const (
 	blockRateNanos = 10_000
 	mutexFraction  = 5
 )
 
 func (p *profiles) register(fs *flag.FlagSet) {
-	fs.StringVar(&p.cpu, "cpuprofile", "", "dev: write a CPU profile of the timed pass to this file")
-	fs.StringVar(&p.mem, "memprofile", "", "dev: write an allocation profile (allocs) after the timed pass to this file, and one from before it to FILE.before (pprof -diff_base)")
-	fs.StringVar(&p.block, "blockprofile", "", "dev: write a block profile of the timed pass to this file")
-	fs.StringVar(&p.mutex, "mutexprofile", "", "dev: write a mutex profile of the timed pass to this file")
-	fs.StringVar(&p.heap, "heapprofile", "", "dev: write an in-use heap profile while the memory pass holds every proxied stream open")
+	fs.StringVar(&p.dir, "profile", "", "dev: write pprof files to this directory (created if missing): cpu, allocs, allocs.before, block, mutex for the timed pass, heap at peak open streams")
 }
 
-// start turns on the requested profiles and returns the function that
-// writes them; it must be called once the timed pass ends.
+// path is where the named profile goes; "" when profiling is off.
+func (p profiles) path(name string) string {
+	if p.dir == "" {
+		return ""
+	}
+	return filepath.Join(p.dir, name+".pprof")
+}
+
+// start turns profiling on and returns the function that writes the
+// timed-pass profiles; it must be called once the timed pass ends.
 func (p profiles) start() (stop func() error, err error) {
-	if p.mem != "" {
-		runtime.GC() // the profile shows allocations as of the last GC
-		if err := writeProfile("allocs", p.mem+".before"); err != nil {
-			return nil, err
-		}
+	if p.dir == "" {
+		return func() error { return nil }, nil
 	}
-	var cpu *os.File
-	if p.cpu != "" {
-		if cpu, err = os.Create(filepath.Clean(p.cpu)); err != nil {
-			return nil, err
-		}
-		if err = pprof.StartCPUProfile(cpu); err != nil {
-			return nil, errors.Join(err, cpu.Close())
-		}
+	if err := os.MkdirAll(filepath.Clean(p.dir), 0o750); err != nil {
+		return nil, err
 	}
-	if p.block != "" {
-		runtime.SetBlockProfileRate(blockRateNanos)
+	runtime.GC() // the allocs profile shows allocations as of the last GC
+	if err := writeProfile("allocs", p.path("allocs.before")); err != nil {
+		return nil, err
 	}
-	if p.mutex != "" {
-		runtime.SetMutexProfileFraction(mutexFraction)
+	cpu, err := os.Create(filepath.Clean(p.path("cpu")))
+	if err != nil {
+		return nil, err
 	}
+	if err = pprof.StartCPUProfile(cpu); err != nil {
+		return nil, errors.Join(err, cpu.Close())
+	}
+	runtime.SetBlockProfileRate(blockRateNanos)
+	runtime.SetMutexProfileFraction(mutexFraction)
 	return func() error {
-		var errs []error
-		if p.mem != "" {
-			runtime.GC()
-		}
-		if cpu != nil {
-			pprof.StopCPUProfile()
-			errs = append(errs, cpu.Close())
-		}
-		errs = append(errs, writeProfile("allocs", p.mem), writeProfile("block", p.block), writeProfile("mutex", p.mutex))
+		runtime.GC()
+		pprof.StopCPUProfile()
+		errs := []error{cpu.Close(), writeProfile("allocs", p.path("allocs")),
+			writeProfile("block", p.path("block")), writeProfile("mutex", p.path("mutex"))}
 		runtime.SetBlockProfileRate(0)
 		runtime.SetMutexProfileFraction(0)
 		return errors.Join(errs...)

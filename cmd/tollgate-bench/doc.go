@@ -36,10 +36,10 @@
 //	GOMAXPROCS=3 go run ./cmd/tollgate-bench -serve-fake -chunk-delay 20ms
 //	GOMAXPROCS=6 go run ./cmd/tollgate-bench -sessions 200 -upstream "<printed line>"
 //
-// Every pass then uses that fake's chunk delay. Dev-only profiles of the timed
-// pass: -cpuprofile, -memprofile (plus FILE.before for pprof -diff_base),
-// -blockprofile, -mutexprofile; -heapprofile is the live heap while the
-// memory pass holds every proxied stream open. -null-proxy is the control:
+// Every pass then uses that fake's chunk delay. Dev-only profiles: -profile
+// DIR writes cpu, allocs (plus allocs.before for pprof -diff_base), block
+// and mutex .pprof files for the timed pass, and heap.pprof while the memory
+// pass holds every proxied stream open. -null-proxy is the control:
 // a minimal stdlib relay replaces tollgate, so its figures are what any
 // proxy hop costs on the rig. Dependency law
 // (internal/archtest, layer "tool", rule D5): the public API, testkit

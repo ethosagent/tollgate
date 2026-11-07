@@ -134,7 +134,7 @@ func measure(ctx context.Context, cfg config) (report, error) {
 	}, nil
 }
 
-// timedPass runs the measured pairs, under the -*profile flags if set.
+// timedPass runs the measured pairs, profiled when -profile is set.
 func timedPass(ctx context.Context, cfg config, l *loader, r *rig) ([]pair, error) {
 	runtime.GC() // start the timed pass from a clean heap; nothing forces a GC inside it
 	stopProf, err := cfg.prof.start()

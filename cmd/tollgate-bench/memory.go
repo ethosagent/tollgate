@@ -70,7 +70,7 @@ func held(ctx context.Context, cfg config, tg target, tag string) (perStream, er
 	mem, gs, streams := l.atPeak(ctx, int64(cfg.sessions))
 	var perr error
 	if tag == memProxyTag {
-		perr = writeProfile("heap", cfg.prof.heap)
+		perr = writeProfile("heap", cfg.prof.path("heap"))
 	}
 	wg.Wait()
 	if err := errors.Join(append(errs, perr)...); err != nil {

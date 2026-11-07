@@ -9,19 +9,17 @@ import (
 	"testing"
 )
 
-// TestRun_WritesProfilesAndGoroutines: every -*profile flag leaves a
-// non-empty pprof file, and the memory pass counts goroutines per stream.
+// TestRun_WritesProfilesAndGoroutines: -profile leaves every pprof file,
+// non-empty, and the memory pass counts goroutines per stream.
 func TestRun_WritesProfilesAndGoroutines(t *testing.T) {
-	dir := t.TempDir()
-	path := func(n string) string { return filepath.Join(dir, n) }
+	dir := filepath.Join(t.TempDir(), "prof")
 	var out bytes.Buffer
-	args := []string{"-sessions", "2", "-calls", "1", "-chunk-delay", "1ms", "-json",
-		"-cpuprofile", path("cpu"), "-memprofile", path("mem"), "-blockprofile", path("block"), "-mutexprofile", path("mutex"), "-heapprofile", path("heap")}
+	args := []string{"-sessions", "2", "-calls", "1", "-chunk-delay", "1ms", "-json", "-profile", dir}
 	if err := run(context.Background(), args, &out); err != nil {
 		t.Fatal(err)
 	}
-	for _, n := range []string{"cpu", "mem", "mem.before", "block", "mutex", "heap"} {
-		if fi, err := os.Stat(path(n)); err != nil || fi.Size() == 0 {
+	for _, n := range []string{"cpu", "allocs", "allocs.before", "block", "mutex", "heap"} {
+		if fi, err := os.Stat(filepath.Join(dir, n+".pprof")); err != nil || fi.Size() == 0 {
 			t.Errorf("profile %s: %v", n, err)
 		}
 	}
@@ -36,10 +34,17 @@ func TestRun_WritesProfilesAndGoroutines(t *testing.T) {
 	}
 }
 
-func TestProfiles_BadPathFails(t *testing.T) {
-	p := profiles{cpu: filepath.Join(t.TempDir(), "missing", "cpu")}
-	if _, err := p.start(); err == nil {
-		t.Fatal("a CPU profile path in a missing directory started")
+func TestProfiles_BadDirFails(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (profiles{dir: filepath.Join(file, "prof")}).start(); err == nil {
+		t.Fatal("profiling started under a regular file")
+	}
+	stop, err := (profiles{}).start()
+	if err != nil || stop() != nil {
+		t.Fatalf("profiling off: start err %v", err)
 	}
 }
 
