@@ -66,6 +66,7 @@ type statusz struct {
 		UnbufferedResponses int64 `json:"unbuffered_responses"`
 		DroppedEvents       int64 `json:"dropped_events"`
 		UsageNotRead        int64 `json:"usage_not_read"`
+		UnheldTerminals     int64 `json:"unheld_terminals"`
 	} `json:"hooks"`
 }
 

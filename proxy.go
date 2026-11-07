@@ -157,6 +157,9 @@ func (p *Proxy) relay(body http.ResponseWriter, r *http.Request, o *outcome, req
 		o.status = res.Status
 	}
 	o.finish = res.Finish
+	if o.final = res.Final; o.final != nil && o.final.Unheld {
+		p.stats.unheld.Add(1)
+	}
 	return res
 }
 

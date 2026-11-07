@@ -15,6 +15,7 @@ type HookCounts struct {
 	UnbufferedResponses int64 // stream:false responses that bypassed OnResponse
 	DroppedEvents       int64 // SSE frames that never reached OnEvent
 	UsageNotRead        int64 // stream:false responses over Limits.MaxResponseCopy (or encoded): no usage
+	UnheldTerminals     int64 // streams whose terminal region outgrew the hold cap: no Finalizer Decide
 }
 
 // SessionCounts are the default SessionStrategy's counters.
@@ -64,6 +65,7 @@ func WriteProm(w io.Writer, r Report) error {
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UnbufferedResponses), "reason", "unbuffered_response")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.DroppedEvents), "reason", "dropped_event")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UsageNotRead), "reason", "usage_not_read")
+	p.sample("tollgate_hook_skips_total", num(r.Hooks.UnheldTerminals), "reason", "unheld_terminal")
 	if r.Queue != nil {
 		p.queue(*r.Queue)
 	}

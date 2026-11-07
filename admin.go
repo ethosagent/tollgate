@@ -128,7 +128,7 @@ func (p *Proxy) AdminHandler() http.Handler {
 func (p *Proxy) report() metrics.Report {
 	r := metrics.Report{InFlight: p.inflight.Load(),
 		Hooks: metrics.HookCounts{UnbufferedResponses: p.stats.unbuffered.Load(), DroppedEvents: p.stats.droppedFrames.Load(),
-			UsageNotRead: p.stats.usageNotRead.Load()}}
+			UsageNotRead: p.stats.usageNotRead.Load(), UnheldTerminals: p.stats.unheld.Load()}}
 	if reg := p.reg.Load(); reg != nil {
 		r.Snapshot = reg.Snapshot()
 	}
@@ -177,6 +177,7 @@ type statuszDoc struct {
 		UnbufferedResponses int64 `json:"unbuffered_responses"`
 		DroppedEvents       int64 `json:"dropped_events"`
 		UsageNotRead        int64 `json:"usage_not_read"`
+		UnheldTerminals     int64 `json:"unheld_terminals"`
 	} `json:"hooks"`
 	// Sessions is absent when the host supplied its own SessionStrategy.
 	Sessions *session.Stats `json:"sessions,omitempty"`
@@ -201,6 +202,7 @@ func statuszOf(r metrics.Report) statuszDoc {
 	if q := r.Queue; q != nil {
 		d.Metrics.QueueDepth, d.Metrics.Dropped, d.Metrics.SinkErrors, d.Metrics.Written, d.Metrics.SinkReady = q.Depth, q.Dropped, q.SinkErrors, q.Written, q.Ready
 	}
-	d.Hooks.UnbufferedResponses, d.Hooks.DroppedEvents, d.Hooks.UsageNotRead = r.Hooks.UnbufferedResponses, r.Hooks.DroppedEvents, r.Hooks.UsageNotRead
+	h := r.Hooks
+	d.Hooks.UnbufferedResponses, d.Hooks.DroppedEvents, d.Hooks.UsageNotRead, d.Hooks.UnheldTerminals = h.UnbufferedResponses, h.DroppedEvents, h.UsageNotRead, h.UnheldTerminals
 	return d
 }

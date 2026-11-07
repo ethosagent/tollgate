@@ -29,6 +29,7 @@ type outcome struct {
 	w        *forward.TimedWriter // the client writer; its first write is the TTFB
 	usage    Usage                // stream:false usage, from the held body
 	tap      *chain.Tap           // stream:true usage (and OnEvent), nil when nobody needs it
+	final    *forward.Finalized   // what the Finalizer barrier did; its usage covers every upstream call
 }
 
 func (p *Proxy) newOutcome(w http.ResponseWriter, r *http.Request) *outcome {
@@ -83,7 +84,10 @@ func (o *outcome) metric(d time.Duration) Metric {
 	m := Metric{CallID: o.callID, TenantID: o.tenant, SessionID: c.Session.ID, Provider: o.provider,
 		Model: c.Model, Stream: c.Stream, Status: o.status, Finish: o.finish, Usage: o.usage,
 		Start: o.start, Duration: d}
-	if o.tap != nil {
+	switch {
+	case o.final != nil: // the barrier saw every upstream response, discarded terminals included
+		m.Usage = o.final.Usage
+	case o.tap != nil:
 		m.Usage = o.tap.Usage()
 	}
 	if t := o.w.FirstWrite(); !t.IsZero() {
