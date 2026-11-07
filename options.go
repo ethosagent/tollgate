@@ -8,17 +8,27 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/ethosagent/tollgate/internal/resolve"
 )
 
 // Options configures a Proxy. The zero value is valid: every nil extension
 // gets its default and every zero limit gets the value from DefaultLimits.
 type Options struct {
-	Auth       Authenticator    // default: NoAuth{}
-	Admission  Admission        // default: Unlimited{}
-	Providers  ProviderResolver // default: path-prefix resolver (internal/resolve)
-	Sessions   SessionStrategy  // default: header-or-predict (internal/session)
-	Metrics    MetricSink       // default: DiscardSink{}
-	Finalizers []Finalizer      // default: none (zero overhead)
+	// Auth resolves the tenant. An error becomes 401, or 403 when the error has
+	// an HTTPStatus() int method returning 403. Default: NoAuth{}.
+	Auth Authenticator
+	// Admission gates each call. An error becomes 429 with a Retry-After header
+	// (seconds, from a RetryAfter() time.Duration method on the error, else 1).
+	// Default: Unlimited{}.
+	Admission Admission
+	// Providers picks the upstream. Any error becomes 404. Default: the
+	// path-prefix resolver (/openai, /anthropic, /openrouter) with the
+	// Policy.AllowedUpstreams override (ADR 0006).
+	Providers  ProviderResolver
+	Sessions   SessionStrategy // default: header-or-predict (internal/session)
+	Metrics    MetricSink      // default: DiscardSink{}
+	Finalizers []Finalizer     // default: none (zero overhead)
 	Transport  http.RoundTripper
 	Logger     *slog.Logger // default: discards everything
 	Limits     Limits
@@ -104,6 +114,9 @@ func (o Options) withDefaults() Options {
 	}
 	o.Limits = o.Limits.withDefaults()
 	o.Headers = o.Headers.withDefaults()
+	if o.Providers == nil {
+		o.Providers = resolve.New(nil, o.Headers.UpstreamURL)
+	}
 	return o
 }
 

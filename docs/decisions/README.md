@@ -11,5 +11,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0003](0003-neutral-model-in-internal-model.md) | Neutral model in `internal/model`, aliased from the root | Accepted |
 | [0004](0004-client-first-streaming.md) | Client-first streaming tee | Accepted |
 | [0005](0005-dev-tools-in-separate-module.md) | Dev tools pinned in a separate module | Accepted |
+| [0006](0006-upstream-override-allowlist.md) | Upstream override allowlist | Accepted |
 
 Template: [`template.md`](template.md).

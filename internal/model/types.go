@@ -22,6 +22,9 @@ type Policy struct {
 	AllowedModels    []string       // empty means all
 	Overrides        map[string]any // body fields forced by policy (e.g. "temperature")
 	Capture          bool           // opt-in request/response capture
+	// AllowedUpstreams lists the hosts (exact, with or without a port) and CIDR
+	// ranges the upstream-override header may target. Empty ignores the header.
+	AllowedUpstreams []string
 	// PrivacyMode overrides the proxy-wide setting for this tenant. nil inherits.
 	PrivacyMode *bool
 }

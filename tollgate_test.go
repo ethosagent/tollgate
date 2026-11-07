@@ -1,7 +1,6 @@
 package tollgate
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -66,31 +65,6 @@ func TestHandler_Health(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s = %d", path, rec.Code)
 		}
-	}
-}
-
-func TestHandler_ProxyPathReturnsProviderShaped501(t *testing.T) {
-	p, err := New(Options{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/openai/v1/chat/completions", strings.NewReader(`{}`))
-	p.Handler().ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("status = %d", rec.Code)
-	}
-	var body struct {
-		Error struct{ Type, Message string } `json:"error"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("body is not JSON: %v", err)
-	}
-	if body.Error.Type != "not_implemented" {
-		t.Fatalf("error type = %q", body.Error.Type)
-	}
-	if ct := rec.Header().Get("Content-Type"); ct != "application/json" {
-		t.Fatalf("content-type = %q", ct)
 	}
 }
 

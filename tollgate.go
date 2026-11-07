@@ -81,22 +81,6 @@ func (p *Proxy) buildHandler() http.Handler {
 	return mux
 }
 
-// serveProxy is the proxy pipeline entry point. The pipeline (Auth →
-// Admission → ProviderResolver → normalise → Session → Hook.Before →
-// Transport → tee → Finalizer → After → MetricSink) is not built yet; until
-// it is, every proxied request gets a provider-shaped 501.
-func (p *Proxy) serveProxy(w http.ResponseWriter, _ *http.Request) {
-	writeError(w, http.StatusNotImplemented, "not_implemented", "the tollgate proxy pipeline is not implemented yet")
-}
-
-// writeError writes an OpenAI-shaped error body, which OpenAI-compatible
-// clients parse. Provider-specific shapes arrive with internal/normalise.
-func writeError(w http.ResponseWriter, status int, typ, msg string) {
-	writeJSON(w, status, map[string]any{
-		"error": map[string]string{"type": typ, "message": msg},
-	})
-}
-
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
