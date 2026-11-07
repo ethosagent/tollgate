@@ -1,0 +1,12 @@
+data: {"id":"chatcmpl-fixture003","object":"chat.completion.chunk","created":1762500000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"role":"assistant","reasoning_content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fixture003","object":"chat.completion.chunk","created":1762500000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"reasoning_content":"The user wants a greeting."},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fixture003","object":"chat.completion.chunk","created":1762500000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{"content":"Hello"},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fixture003","object":"chat.completion.chunk","created":1762500000,"model":"deepseek-reasoner","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}
+
+data: {"id":"chatcmpl-fixture003","object":"chat.completion.chunk","created":1762500000,"model":"deepseek-reasoner","choices":[],"usage":{"prompt_tokens":12,"completion_tokens":9,"total_tokens":21,"completion_tokens_details":{"reasoning_tokens":6}}}
+
+data: [DONE]
+
