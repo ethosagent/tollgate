@@ -78,7 +78,8 @@ func held(ctx context.Context, cfg config, tg target, tag string) (perStream, er
 	}
 	out := perStream{streams: streams}
 	if streams == 0 {
-		return out, nil
+		return out, errors.New("memory pass: no stream was still open to measure; " +
+			"streams must stay open (an -upstream fake needs -chunk-delay of at least 100ms)")
 	}
 	// Each session's own goroutine (wg.Go) is the client's, on both paths.
 	out.goroutines = math.Round(100*float64(gs-baseG)/float64(streams)) / 100
@@ -89,13 +90,13 @@ func held(ctx context.Context, cfg config, tg target, tag string) (perStream, er
 }
 
 // atPeak waits until want streams are open, or the count stops rising
-// because streams have begun to end, then collects garbage and reads live
-// memory with that many open.
+// because streams have begun to end (all of them, possibly, between two
+// looks), then collects garbage and reads live memory with that many open.
 func (l *loader) atPeak(ctx context.Context, want int64) (mem uint64, goroutines int, streams int64) {
 	tick := time.NewTicker(time.Millisecond)
 	defer tick.Stop()
 	for ctx.Err() == nil {
-		if n := l.open.Load(); n >= want || (n > 0 && n < l.peak.Load()) {
+		if n := l.open.Load(); n >= want || n < l.peak.Load() {
 			break
 		}
 		<-tick.C
