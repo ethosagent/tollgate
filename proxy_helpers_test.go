@@ -37,6 +37,12 @@ func newProxyServer(t testing.TB, opts tollgate.Options) string {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
+	return serve(t, p)
+}
+
+// serve starts p's handler on a test server and returns its base URL.
+func serve(t testing.TB, p *tollgate.Proxy) string {
+	t.Helper()
 	srv := httptest.NewServer(p.Handler())
 	t.Cleanup(srv.Close)
 	return srv.URL
@@ -55,7 +61,13 @@ func via(up *testkit.FakeUpstream, kv ...string) map[string]string {
 // post sends body to base+path with the given headers.
 func post(t testing.TB, base, path string, body []byte, hdr map[string]string) *http.Response {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, base+path, bytes.NewReader(body))
+	return postCtx(context.Background(), t, base, path, body, hdr)
+}
+
+// postCtx is post under ctx, so a test can cancel the client.
+func postCtx(ctx context.Context, t testing.TB, base, path string, body []byte, hdr map[string]string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+path, bytes.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}

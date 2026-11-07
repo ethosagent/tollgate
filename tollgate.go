@@ -23,6 +23,8 @@ type Proxy struct {
 
 	mu    sync.RWMutex
 	hooks []Hook
+
+	stats hookStats
 }
 
 // New validates opts, applies defaults and returns a Proxy.
