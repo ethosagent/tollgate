@@ -43,6 +43,7 @@ type (
 	StreamSummary    = model.StreamSummary
 	StatusError      = model.StatusError
 	RetryAfterError  = model.RetryAfterError
+	HeaderConsumer   = model.HeaderConsumer
 )
 
 // Default implementations.

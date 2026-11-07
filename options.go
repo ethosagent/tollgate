@@ -155,7 +155,7 @@ func (h HeaderNames) withDefaults() HeaderNames {
 // applied. New calls it; hosts may call it to check config early.
 func (o Options) Validate() error {
 	o = o.withDefaults()
-	errs := []error{o.Limits.validate(), o.Headers.validate()}
+	errs := []error{o.Limits.validate(), o.Headers.validate(), validateConsumed(o.consumedHeaders())}
 	if o.Limits.HookBeforeDeadline > o.Limits.HookChainDeadline {
 		errs = append(errs, errors.New("limits: HookBeforeDeadline exceeds HookChainDeadline"))
 	}
@@ -215,6 +215,29 @@ func (h HeaderNames) validate() error {
 		seen[key] = f.field
 		if isReservedHeader(key) {
 			errs = append(errs, fmt.Errorf("headers: %s %q is reserved for upstream credentials or transport", f.field, f.value))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// consumedHeaders returns the request headers the configured extensions
+// claim through HeaderConsumer. The core strips them before forwarding
+// (ADR 0009).
+func (o Options) consumedHeaders() []string {
+	var out []string
+	for _, ext := range []any{o.Auth, o.Admission, o.Providers, o.Sessions} {
+		if hc, ok := ext.(HeaderConsumer); ok {
+			out = append(out, hc.ConsumedHeaders()...)
+		}
+	}
+	return out
+}
+
+func validateConsumed(names []string) error {
+	var errs []error
+	for _, n := range names {
+		if strings.TrimSpace(n) == "" || isReservedHeader(strings.ToLower(n)) {
+			errs = append(errs, fmt.Errorf("headers: an extension consumes %q, which is empty or reserved", n))
 		}
 	}
 	return errors.Join(errs...)

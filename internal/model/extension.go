@@ -86,3 +86,14 @@ type Finalizer interface {
 	Name() string
 	Decide(ctx context.Context, c *Call, s StreamSummary) Decision
 }
+
+// HeaderConsumer is an optional interface for an extension in Options (Auth,
+// Admission, Providers, Sessions) that reads its own request headers, such as
+// a tenant credential. New type-asserts it once and strips the named headers
+// before forwarding, so a tenant key never reaches the upstream whatever
+// Options.Headers says. Upstream credential and transport headers
+// (Authorization, x-api-key, Content-Type, ...) cannot be claimed: New fails.
+// The names are read once, in New. See docs/decisions/0009.
+type HeaderConsumer interface {
+	ConsumedHeaders() []string
+}

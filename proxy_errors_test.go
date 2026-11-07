@@ -278,3 +278,33 @@ func TestProxy_UpstreamOverrideIgnoredWithoutPolicy(t *testing.T) {
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+type leakyErr struct{ status int }
+
+func (e leakyErr) Error() string   { return "tenant-detail-s3cret" }
+func (e leakyErr) HTTPStatus() int { return e.status }
+
+// TestProxy_RejectSendsFixedMessagePerStatus covers F1 (ADR 0008): the body
+// says only what the status means; extension error text never reaches it.
+func TestProxy_RejectSendsFixedMessagePerStatus(t *testing.T) {
+	tests := []struct {
+		name string
+		opts tollgate.Options
+		want string
+	}{
+		{"auth 403", tollgate.Options{Auth: failAuth{leakyErr{403}}}, "permission denied"},
+		{"admission 403", tollgate.Options{Admission: &countingAdmission{err: leakyErr{403}}}, "permission denied"},
+		{"admission 503", tollgate.Options{Admission: &countingAdmission{err: leakyErr{503}}}, "service unavailable"},
+		{"resolver 404", tollgate.Options{Providers: noProviders{}}, "unknown provider or upstream"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up := testkit.NewFakeUpstream(t, testkit.Options{})
+			resp := post(t, newProxyServer(t, tt.opts), "/openai/v1/chat/completions", []byte(`{}`), via(up))
+			raw := string(readAll(t, resp))
+			if strings.Contains(raw, "s3cret") || !strings.Contains(raw, `"message":"`+tt.want+`"`) {
+				t.Fatalf("body = %s, want fixed message %q", raw, tt.want)
+			}
+		})
+	}
+}

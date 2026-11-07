@@ -40,7 +40,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 
 	tenant, err := p.opts.Auth.Authenticate(r.Context(), r)
 	if err != nil {
-		p.reject(w, o, model.StatusOf(err, http.StatusUnauthorized), "authentication failed")
+		p.reject(w, o, model.StatusOf(err, http.StatusUnauthorized))
 		return
 	}
 	o.tenant = tenant.ID
@@ -48,7 +48,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 	release, err := p.opts.Admission.Acquire(r.Context(), tenant, call)
 	if err != nil {
 		w.Header().Set("Retry-After", retryAfter(err))
-		p.reject(w, o, model.StatusOf(err, http.StatusTooManyRequests), "too many requests")
+		p.reject(w, o, model.StatusOf(err, http.StatusTooManyRequests))
 		return
 	}
 	if release != nil {
@@ -56,12 +56,12 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	target, err := p.target(r, tenant, o)
 	if err != nil {
-		p.reject(w, o, model.StatusOf(err, http.StatusNotFound), "unknown provider or upstream")
+		p.reject(w, o, model.StatusOf(err, http.StatusNotFound))
 		return
 	}
 	body, err := forward.ReadBody(w, r, p.opts.Limits.MaxRequestBody)
 	if err != nil {
-		p.reject(w, o, model.StatusOf(err, http.StatusBadRequest), "request body rejected")
+		p.reject(w, o, model.StatusOf(err, http.StatusBadRequest))
 		return
 	}
 	p.forward(w, r, o, forward.Request{Method: r.Method, Target: target, Header: call.Header, Body: body})
@@ -92,7 +92,7 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, o *outcome, req 
 	req.Shape = o.shape
 	res, err := forward.Forward(r.Context(), p.opts.Transport, w, req)
 	if err != nil {
-		p.reject(w, o, model.StatusOf(err, http.StatusBadGateway), err.Error())
+		p.reject(w, o, model.StatusOf(err, http.StatusBadGateway))
 	} else if res.Status != 0 {
 		o.status = res.Status
 	}
@@ -102,9 +102,12 @@ func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, o *outcome, req 
 	}
 }
 
-func (p *Proxy) reject(w http.ResponseWriter, o *outcome, status int, msg string) {
+// reject answers with a provider-shaped error whose message is fixed by the
+// status alone (ADR 0008): no error text from an extension or the transport
+// ever reaches the client.
+func (p *Proxy) reject(w http.ResponseWriter, o *outcome, status int) {
 	o.status, o.finish = status, FinishRejected
-	normalise.WriteError(w, o.shape, status, msg)
+	normalise.WriteError(w, o.shape, status, normalise.StatusMessage(status))
 }
 
 // logCall writes the access line. The request context may already be

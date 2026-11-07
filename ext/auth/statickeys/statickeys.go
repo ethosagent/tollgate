@@ -12,7 +12,10 @@ import (
 	"github.com/ethosagent/tollgate"
 )
 
-var _ tollgate.Authenticator = (*Auth)(nil)
+var (
+	_ tollgate.Authenticator  = (*Auth)(nil)
+	_ tollgate.HeaderConsumer = (*Auth)(nil)
+)
 
 // Tenant is what a key resolves to.
 type Tenant struct {
@@ -22,11 +25,13 @@ type Tenant struct {
 	AllowedUpstreams []string // hosts / CIDRs the upstream-override header may target
 }
 
-// Config configures New.
+// Config configures New. New copies everything it keeps, so changing cfg
+// afterwards has no effect.
 type Config struct {
 	// Header is the request header that carries the key. Empty uses
-	// tollgate.DefaultHeaderNames().TenantKey; it must match
-	// Options.Headers.TenantKey if the host changed that.
+	// tollgate.DefaultHeaderNames().TenantKey. Auth reports it through
+	// tollgate.HeaderConsumer, so the core strips it before forwarding even
+	// when it differs from Options.Headers.TenantKey (ADR 0009).
 	Header string
 	// Keys maps each secret key to its tenant. Several keys may share a
 	// tenant (rotation).
@@ -79,9 +84,20 @@ func New(cfg Config) (*Auth, error) {
 		if t.ID == "" {
 			return nil, errors.New("statickeys: empty tenant ID")
 		}
-		entries = append(entries, entry{digest: sha256.Sum256([]byte(key)), tenant: t})
+		entries = append(entries, entry{digest: sha256.Sum256([]byte(key)), tenant: cloneTenant(t)})
 	}
 	return &Auth{header: header, entries: entries}, nil
+}
+
+// ConsumedHeaders implements tollgate.HeaderConsumer: the key header must
+// never reach the upstream.
+func (a *Auth) ConsumedHeaders() []string { return []string{a.header} }
+
+func cloneTenant(t Tenant) Tenant {
+	t.AllowedProviders = slices.Clone(t.AllowedProviders)
+	t.AllowedModels = slices.Clone(t.AllowedModels)
+	t.AllowedUpstreams = slices.Clone(t.AllowedUpstreams)
+	return t
 }
 
 func validHeader(name string) bool {

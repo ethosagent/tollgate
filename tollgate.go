@@ -17,7 +17,7 @@ type Proxy struct {
 	opts    Options
 	handler http.Handler // built once in New
 
-	reqHeaders forward.HeaderFilter // strips hop-by-hop and tollgate's own headers
+	reqHeaders forward.HeaderFilter // strips hop-by-hop, tollgate's own and extension-consumed headers
 	idPrefix   string               // random per Proxy; call IDs are idPrefix + counter
 	callSeq    atomic.Uint64
 
@@ -43,7 +43,7 @@ func New(opts Options) (*Proxy, error) {
 	h := opts.Headers
 	p := &Proxy{
 		opts:       opts,
-		reqHeaders: forward.NewHeaderFilter(h.TenantKey, h.Session, h.UpstreamURL),
+		reqHeaders: forward.NewHeaderFilter(append([]string{h.TenantKey, h.Session, h.UpstreamURL}, opts.consumedHeaders()...)...),
 		idPrefix:   rand.Text()[:12] + "-",
 	}
 	p.handler = p.buildHandler()

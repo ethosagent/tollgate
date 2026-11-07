@@ -98,3 +98,31 @@ func TestValidate_ReportsAllProblemsAtOnce(t *testing.T) {
 		}
 	}
 }
+
+type claimer struct {
+	NoAuth
+	names []string
+}
+
+func (c claimer) ConsumedHeaders() []string { return c.names }
+
+func TestValidate_ConsumedHeaders(t *testing.T) {
+	tests := []struct {
+		name    string
+		claims  []string
+		wantErr bool
+	}{
+		{"custom credential header is fine", []string{"x-team-key"}, false},
+		{"authorization cannot be claimed", []string{"Authorization"}, true},
+		{"x-api-key cannot be claimed", []string{"X-Api-Key"}, true},
+		{"empty name is rejected", []string{" "}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := New(Options{Auth: claimer{names: tt.claims}})
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}

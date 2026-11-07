@@ -74,3 +74,20 @@ func TestWriteError_Shapes(t *testing.T) {
 		})
 	}
 }
+
+func TestStatusMessage_FixedPerStatus(t *testing.T) {
+	tests := []struct {
+		status int
+		want   string
+	}{
+		{403, "permission denied"},
+		{504, "upstream timed out"},
+		{418, "i'm a teapot"},
+		{599, "error"},
+	}
+	for _, tt := range tests {
+		if got := StatusMessage(tt.status); got != tt.want {
+			t.Errorf("StatusMessage(%d) = %q, want %q", tt.status, got, tt.want)
+		}
+	}
+}

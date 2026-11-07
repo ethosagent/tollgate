@@ -128,9 +128,23 @@ func TestNew_DefaultHeaderFromCore(t *testing.T) {
 	}
 }
 
-func TestAuth_WorksWithTollgate(t *testing.T) {
-	a := newAuth(t, baseConfig())
-	if _, err := tollgate.New(tollgate.Options{Auth: a}); err != nil {
+func TestNew_CopiesConfig(t *testing.T) {
+	cfg := baseConfig()
+	a := newAuth(t, cfg)
+	cfg.Keys["key-a"].AllowedProviders[0] = "mutated"
+	got, err := a.Authenticate(context.Background(), request("x-proxy-key", "key-a"))
+	if err != nil {
 		t.Fatal(err)
+	}
+	if p := got.Policy.AllowedProviders[0]; p != "openai" {
+		t.Fatalf("policy follows a config mutated after New: %q", p)
+	}
+}
+
+func TestConsumedHeaders_IsTheKeyHeader(t *testing.T) {
+	cfg := baseConfig()
+	cfg.Header = "X-Team-Key"
+	if got := newAuth(t, cfg).ConsumedHeaders(); len(got) != 1 || got[0] != "X-Team-Key" {
+		t.Fatalf("ConsumedHeaders = %q", got)
 	}
 }

@@ -3,6 +3,7 @@ package normalise
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"github.com/ethosagent/tollgate/internal/model"
 )
@@ -30,8 +31,9 @@ func ShapeForWire(w model.WireFormat) ErrorShape {
 	return ShapeGeneric
 }
 
-// errorTypes maps a status to the error type each wire uses; the generic
-// shape uses the OpenAI names. A status not listed gets the fallback.
+// openAITypes maps a status to the OpenAI error type; the generic shape uses
+// the same names. anthropicOverrides lists only where Anthropic differs. A
+// status not listed gets the shape's fallback type.
 var (
 	openAITypes = map[int]string{
 		http.StatusBadRequest:            "invalid_request_error",
@@ -42,22 +44,61 @@ var (
 		http.StatusTooManyRequests:       "rate_limit_error",
 		http.StatusGatewayTimeout:        "timeout_error",
 	}
-	anthropicTypes = map[int]string{
-		http.StatusBadRequest:            "invalid_request_error",
+	anthropicOverrides = map[int]string{
 		http.StatusNotFound:              "not_found_error",
 		http.StatusRequestEntityTooLarge: "request_too_large",
-		http.StatusUnauthorized:          "authentication_error",
-		http.StatusForbidden:             "permission_error",
-		http.StatusTooManyRequests:       "rate_limit_error",
-		http.StatusGatewayTimeout:        "timeout_error",
 	}
 )
 
-func errorType(types map[int]string, status int, fallback string) string {
-	if t, ok := types[status]; ok {
+func errorType(shape ErrorShape, status int) string {
+	if shape == ShapeAnthropic {
+		if t, ok := anthropicOverrides[status]; ok {
+			return t
+		}
+	}
+	if t, ok := openAITypes[status]; ok {
 		return t
 	}
-	return fallback
+	if shape == ShapeAnthropic {
+		return "api_error"
+	}
+	return "server_error"
+}
+
+// statusMessages is the fixed client-facing message per status (ADR 0008):
+// a rejection never carries an extension's or the transport's error text.
+var statusMessages = map[int]string{
+	http.StatusBadRequest:            "bad request",
+	http.StatusUnauthorized:          "authentication failed",
+	http.StatusForbidden:             "permission denied",
+	http.StatusNotFound:              "unknown provider or upstream",
+	http.StatusRequestEntityTooLarge: "request body too large",
+	http.StatusTooManyRequests:       "too many requests",
+	http.StatusInternalServerError:   "internal error",
+	http.StatusBadGateway:            "upstream error",
+	http.StatusServiceUnavailable:    "service unavailable",
+	http.StatusGatewayTimeout:        "upstream timed out",
+}
+
+// StatusMessage returns the fixed message for status: the table above, else
+// the lower-cased standard status text. It never depends on an error value.
+func StatusMessage(status int) string {
+	if m, ok := statusMessages[status]; ok {
+		return m
+	}
+	if t := http.StatusText(status); t != "" {
+		return strings.ToLower(t)
+	}
+	return "error"
+}
+
+// FinishStatus is the status that describes a stream that ended with f after
+// it started: 504 for a timeout, else 502. The SSE error event uses it.
+func FinishStatus(f model.Finish) int {
+	if f == model.FinishTimeout {
+		return http.StatusGatewayTimeout
+	}
+	return http.StatusBadGateway
 }
 
 // errorBody is the JSON error document for a shape.
@@ -66,15 +107,15 @@ func errorBody(shape ErrorShape, status int, msg string) any {
 	case ShapeAnthropic:
 		return map[string]any{
 			"type":  "error",
-			"error": map[string]string{"type": errorType(anthropicTypes, status, "api_error"), "message": msg},
+			"error": map[string]string{"type": errorType(shape, status), "message": msg},
 		}
 	case ShapeOpenAI:
 		return map[string]any{
-			"error": map[string]any{"message": msg, "type": errorType(openAITypes, status, "server_error"), "param": nil, "code": nil},
+			"error": map[string]any{"message": msg, "type": errorType(shape, status), "param": nil, "code": nil},
 		}
 	}
 	return map[string]any{
-		"error": map[string]string{"type": errorType(openAITypes, status, "server_error"), "message": msg},
+		"error": map[string]string{"type": errorType(shape, status), "message": msg},
 	}
 }
 
