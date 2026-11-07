@@ -37,6 +37,10 @@ func cloneTenant(t tollgate.Tenant) tollgate.Tenant {
 		p.AllowedModels = slices.Clone(p.AllowedModels)
 		p.AllowedUpstreams = slices.Clone(p.AllowedUpstreams)
 		p.Overrides = maps.Clone(p.Overrides)
+		if p.PrivacyMode != nil {
+			pm := *p.PrivacyMode
+			p.PrivacyMode = &pm
+		}
 		t.Policy = &p
 	}
 	return t

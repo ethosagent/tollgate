@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"testing"
 	"time"
 
@@ -134,7 +135,7 @@ func sendFixture(ctx context.Context, srv *httptest.Server, fx string, extra htt
 	req.Header.Set(FixtureHeader, fx)
 	req.Header.Set(sessionHeader, "testkit-session")
 	for k, v := range extra {
-		req.Header[http.CanonicalHeaderKey(k)] = v
+		req.Header[http.CanonicalHeaderKey(k)] = slices.Clone(v) // never alias Config.Headers
 	}
 	resp, err := srv.Client().Do(req)
 	if err != nil {
