@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# pre-commit: the fast gates only. The full gate runs on pre-push and in CI.
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+exec scripts/run-checks.sh fmt vet docs

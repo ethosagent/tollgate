@@ -1,0 +1,21 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    labels: [dependencies]
+    commit-message: { prefix: "chore(deps)" }
+  - package-ecosystem: gomod
+    directory: /tools
+    schedule: { interval: weekly, day: monday }
+    groups:
+      dev-tools: { patterns: ["*"] }
+    labels: [dependencies, tooling]
+    commit-message: { prefix: "chore(tools)" }
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly, day: monday }
+    groups:
+      actions: { patterns: ["*"] }
+    labels: [dependencies, ci]
+    commit-message: { prefix: "chore(ci)" }

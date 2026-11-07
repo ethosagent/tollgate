@@ -1,0 +1,23 @@
+# Repo contract for an autonomous agent harness. The harness knows nothing
+# about Go; every project-specific command and path comes from here.
+version: 1
+
+commands:
+  fast: "scripts/run-checks.sh --fast"
+  gate: "scripts/run-checks.sh"
+  list_gates: "scripts/run-checks.sh --list"
+
+risk_map: ".agents/risk.yaml"
+protected_tier: gates # an agent never commits to these paths without approval
+
+reviews:
+  dir: ".agents/reviews"
+  by_tier:
+    critical: [streaming, privacy, api-stability, hot-path, test-quality]
+    normal: [test-quality, privacy]
+    low: []
+    gates: [] # a human reviews gate changes
+
+skills_dir: ".agents/skills"
+pr_template: ".github/pull_request_template.md"
+handoff_file: "HANDOFF.md"

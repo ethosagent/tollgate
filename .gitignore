@@ -1,0 +1,26 @@
+# Build output
+/bin/
+/tollgated
+*.test
+
+# Gate logs and coverage (scripts/run-checks.sh)
+/.logs/
+*.out
+
+# Session handoff (the handoff skill); local to one machine
+/HANDOFF.md
+
+# plan/: the design doc and milestone plans (plan/NNN-title.md). Local only; never committed.
+/plan/
+
+# Claude Code local-only settings; keep settings.json, hooks and the skills symlink tracked
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Env and OS cruft
+.env
+.DS_Store
+
+# Research notes and reports (deep-research skill); not part of the library
+/research_notes/
+/reports/

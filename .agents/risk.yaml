@@ -1,0 +1,37 @@
+# Risk tiers by path glob. The HIGHEST tier any changed file hits is the PR's
+# tier (critical > gates > normal > low). An unmatched path is `normal`.
+# `*` stays inside one path segment, `**` crosses directories.
+# The tier picks the review lenses (.agents/reviews/README.md).
+# Changing this file is itself a gates change: an agent stops and asks.
+version: 1
+
+tiers:
+  critical: # the client's bytes, credentials, isolation guarantees
+    - tollgate.go
+    - internal/forward/**
+    - internal/chain/**
+    - internal/normalise/**
+    - internal/model/**    # public API via aliases
+    - model.go
+    - options.go
+  gates: # protected paths: they define what "green" means
+    - scripts/**
+    - .githooks/**
+    - .github/**
+    - .golangci.yml
+    - .agents/**
+    - internal/archtest/**
+    - tools/**
+    - .claude/settings.json
+    - .claude/hooks/**
+    - ARCHITECTURE.md
+  normal:
+    - internal/**
+    - ext/**
+    - testkit/**
+    - cmd/**
+    - go.mod
+    - go.sum
+  low: # docs only
+    - docs/**
+    - "*.md"

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(scripts/run-checks.sh:*)",
+      "Bash(scripts/check-*.sh:*)",
+      "Bash(go build:*)",
+      "Bash(go test:*)",
+      "Bash(go vet:*)",
+      "Bash(go list:*)",
+      "Bash(gofmt:*)",
+      "Bash(go tool -modfile=tools/go.mod:*)",
+      "Bash(make check:*)",
+      "Bash(make test:*)"
+    ],
+    "deny": [
+      "Read(./go.sum)",
+      "Read(./tools/go.sum)",
+      "Read(./.logs/coverage.out)",
+      "Read(./**/*.out)",
+      "Read(./tollgated)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session-start.sh" }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Read",
+        "hooks": [
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/read-guard.sh" }
+        ]
+      }
+    ]
+  }
+}

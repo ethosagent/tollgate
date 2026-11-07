@@ -1,0 +1,19 @@
+name: Bug
+description: Something behaves differently from ARCHITECTURE.md or the docs
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes: { label: What happens, description: "Observed vs expected. Exact error text." }
+    validations: { required: true }
+  - type: textarea
+    id: repro
+    attributes: { label: Reproduction, description: "Smallest steps or a failing test. Scrub keys and prompts." }
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes: { label: Acceptance criteria, description: "How we know it is fixed (usually: this test passes)." }
+    validations: { required: true }
+  - type: textarea
+    id: files
+    attributes: { label: Files likely touched }

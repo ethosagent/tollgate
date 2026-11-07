@@ -1,0 +1,23 @@
+name: Feature
+description: New capability, seam or extension
+labels: [feature]
+body:
+  - type: textarea
+    id: why
+    attributes: { label: Why, description: "The problem, in 1-3 sentences." }
+    validations: { required: true }
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: "Testable statements. Each becomes a row in the PR's evidence table."
+      placeholder: "- [ ] A stream:true call through a panicking OnEvent hook still reaches the client byte-for-byte"
+    validations: { required: true }
+  - type: textarea
+    id: files
+    attributes: { label: Files likely touched, description: "Predicts the risk tier (.agents/risk.yaml)." }
+    validations: { required: true }
+  - type: dropdown
+    id: size
+    attributes: { label: Size, options: [S, M, L] }
+    validations: { required: true }

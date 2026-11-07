@@ -1,0 +1,69 @@
+# golangci-lint v2 config. Pinned version: tools/go.mod. Run: scripts/check-lint.sh
+# This file is a protected path (.agents/risk.yaml): never loosen it to make
+# a check pass. Every //nolint must name the linter and give a reason.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard # errcheck, govet, ineffassign, staticcheck, unused
+  enable:
+    - bodyclose    # unclosed upstream response bodies leak connections
+    - contextcheck # context must flow through the call path
+    - errorlint    # errors.Is/As, %w wrapping
+    - forbidigo    # banned calls, see below
+    - funlen       # functions <= 50 lines (docs/conventions.md)
+    - gocognit
+    - gosec
+    - misspell
+    - noctx        # every outbound request carries a context
+    - nolintlint
+    - revive
+    - unconvert
+  settings:
+    funlen:
+      lines: 50
+      statements: 40
+      ignore-comments: true
+    gocognit:
+      min-complexity: 20
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    misspell: {} # default locale: accepts both UK and US spellings (the plan uses "normalise")
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: ^http\.(DefaultClient|DefaultTransport|Get|Head|Post|PostForm)$
+          msg: "use the configured Options.Transport; the default client has no timeouts (HOT-1)"
+        - pattern: ^log\.(Print|Printf|Println|Fatal|Fatalf|Fatalln|Panic|Panicf|Panicln)$
+          msg: "use the injected *slog.Logger (PRIV-1)"
+        - pattern: ^(fmt\.Print|fmt\.Printf|fmt\.Println|print|println)$
+          msg: "library code writes no stdout; log through slog or write to an io.Writer"
+        - pattern: ^os\.(Exit|Getenv|LookupEnv|Environ)$
+          msg: "the library reads no process state; configuration arrives through Options (only cmd/ may)"
+  exclusions:
+    generated: lax
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters: [funlen, gocognit, errcheck, gosec, forbidigo, bodyclose, noctx]
+      - path: ^cmd/ # the binary owns process state (env, exit, stdout); the library never does
+        linters: [forbidigo]
+      - path: ^model\.go$
+        linters: [revive]
+        text: "comment on exported" # aliases carry their docs in internal/model (ADR 0003)
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes: [github.com/ethosagent/tollgate]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
