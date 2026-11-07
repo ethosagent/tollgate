@@ -73,19 +73,29 @@ func TestProxy_ClientDisconnectCancelsUpstream(t *testing.T) {
 	t.Fatal("upstream request was not cancelled after the client disconnected")
 }
 
-func TestProxy_UpstreamDropMidStreamCutsClient(t *testing.T) {
+func TestProxy_UpstreamDropMidStreamEndsWithErrorEvent(t *testing.T) {
 	const keep = 2
-	up := testkit.NewFakeUpstream(t, testkit.Options{FailAfterChunks: keep})
-	base := newProxyServer(t, tollgate.Options{})
-	resp := post(t, base, "/openai/v1/chat/completions", []byte(`{"stream":true}`), via(up))
-	got, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	if err == nil {
-		t.Fatal("client saw a clean end of stream after an upstream drop")
+	tests := []struct {
+		name, path, fixture, wantEvent string
+	}{
+		{"openai", "/openai/v1/chat/completions", streamFixture, `"server_error"`},
+		{"anthropic", "/anthropic/v1/messages", "anthropic/messages-stream-text", "event: error\ndata: "},
 	}
-	want := bytes.Join(testkit.Chunks(streamFixture)[:keep], nil)
-	if !bytes.Equal(got, want) {
-		t.Fatalf("partial bytes = %q, want the first %d chunks %q", got, keep, want)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up := testkit.NewFakeUpstream(t, testkit.Options{FailAfterChunks: keep})
+			base := newProxyServer(t, tollgate.Options{})
+			resp := post(t, base, tt.path, []byte(`{"stream":true}`), via(up))
+			got, err := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if err != nil {
+				t.Fatalf("client saw a cut, want a clean end after the error event: %v", err)
+			}
+			sent := bytes.Join(testkit.Chunks(tt.fixture)[:keep], nil)
+			if !bytes.HasPrefix(got, sent) || !bytes.Contains(got[len(sent):], []byte(tt.wantEvent)) {
+				t.Fatalf("body = %q, want the first %d chunks then an error event with %q", got, keep, tt.wantEvent)
+			}
+		})
 	}
 }
 

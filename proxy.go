@@ -83,12 +83,14 @@ func (p *Proxy) target(r *http.Request, t Tenant, o *outcome) (*url.URL, error) 
 	return forward.Target(prov.BaseURL, override, allow, r.URL, rest)
 }
 
-// forward runs the upstream call under Limits.MaxCallDuration. It is the one
-// place a broken stream is aborted.
+// forward runs the upstream call under the stream limits (first byte, idle,
+// max call duration). It is the one place a broken non-SSE body is aborted;
+// a broken SSE stream ends with an error event instead.
 func (p *Proxy) forward(w http.ResponseWriter, r *http.Request, o *outcome, req forward.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), p.opts.Limits.MaxCallDuration)
-	defer cancel()
-	res, err := forward.Forward(ctx, p.opts.Transport, w, req)
+	l := p.opts.Limits
+	req.Limits = forward.StreamLimits{FirstByte: l.FirstByteTimeout, Idle: l.IdleStreamTimeout, MaxCall: l.MaxCallDuration}
+	req.Shape = o.shape
+	res, err := forward.Forward(r.Context(), p.opts.Transport, w, req)
 	if err != nil {
 		p.reject(w, o, model.StatusOf(err, http.StatusBadGateway), err.Error())
 	} else if res.Status != 0 {

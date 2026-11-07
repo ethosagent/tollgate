@@ -3,7 +3,10 @@
 // upstream transport, header filtering (strip tollgate's own and hop-by-hop
 // headers, pass credentials through), and Forward, which makes the upstream
 // call and relays the response byte for byte, flushing every read. The
-// client-first SSE tee builds on Relay.
+// client-first SSE tee (Tee) writes and flushes each read to the client before
+// a copy is scanned into SSE frames for a bounded FrameQueue (ADR 0004); a
+// watchdog enforces the first-byte, idle and max-call limits, and a stream
+// that times out or drops ends with a provider-shaped error event.
 //
 // Dependency law (internal/archtest, rule D3): standard library and other
 // internal packages only.

@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync"
@@ -118,19 +119,34 @@ func TestProxy_ReleaseCalledOnceOnAbortExits(t *testing.T) {
 			t.Fatalf("acquired=%d released=%d", adm.acquired.Load(), adm.released.Load())
 		}
 	})
-	t.Run("upstream drop mid-stream", func(t *testing.T) {
+	t.Run("upstream drop mid-stream ends with an error event", func(t *testing.T) {
 		up := testkit.NewFakeUpstream(t, testkit.Options{FailAfterChunks: 2})
 		adm := &countingAdmission{}
 		base := newProxyServer(t, tollgate.Options{Admission: adm})
 		resp := post(t, base, "/openai/v1/chat/completions", []byte(`{"stream":true}`), via(up))
+		body, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || !strings.Contains(string(body), `"error"`) {
+			t.Fatalf("want a clean end with an error event, got %q %v", body, err)
+		}
+		eventually(t, "release", func() bool { return adm.released.Load() == 1 })
+	})
+	t.Run("upstream drop mid JSON body cuts the client", func(t *testing.T) {
+		up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"a":`))
+			w.(http.Flusher).Flush()
+			panic(http.ErrAbortHandler)
+		}))
+		t.Cleanup(up.Close)
+		adm := &countingAdmission{}
+		base := newProxyServer(t, tollgate.Options{Admission: adm})
+		resp := post(t, base, "/openai/v1/chat/completions", []byte(`{}`), map[string]string{"x-upstream-url": up.URL})
 		if _, err := io.ReadAll(resp.Body); err == nil {
-			t.Fatal("want a cut stream")
+			t.Fatal("want a cut body")
 		}
 		resp.Body.Close()
 		eventually(t, "release", func() bool { return adm.released.Load() == 1 })
-		if adm.acquired.Load() != 1 {
-			t.Fatalf("acquired=%d", adm.acquired.Load())
-		}
 	})
 }
 

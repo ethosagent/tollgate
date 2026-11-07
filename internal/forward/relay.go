@@ -2,7 +2,6 @@ package forward
 
 import (
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"sync"
@@ -27,27 +26,7 @@ var relayBufs = sync.Pool{New: func() any { b := make([]byte, relayBufSize); ret
 // bytes written. A nil error means src hit EOF; a failure wraps
 // ErrClientWrite or ErrUpstreamRead.
 func Relay(dst http.ResponseWriter, src io.Reader) (int64, error) {
-	rc := http.NewResponseController(dst)
-	bp := relayBufs.Get().(*[]byte)
-	defer relayBufs.Put(bp)
-	buf := *bp
-	var total int64
-	for {
-		n, rerr := src.Read(buf)
-		if n > 0 {
-			w, werr := writeFlush(dst, rc, buf[:n])
-			total += int64(w)
-			if werr != nil {
-				return total, fmt.Errorf("%w: %w", ErrClientWrite, werr)
-			}
-		}
-		if errors.Is(rerr, io.EOF) {
-			return total, nil
-		}
-		if rerr != nil {
-			return total, fmt.Errorf("%w: %w", ErrUpstreamRead, rerr)
-		}
-	}
+	return Tee(dst, src, nil, nil)
 }
 
 // writeFlush writes p in full and flushes; a writer that cannot flush is

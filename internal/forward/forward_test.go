@@ -84,7 +84,7 @@ func TestForward_RelaysAndMarksCut(t *testing.T) {
 			t.Errorf("request = %v len=%d", r.Header, r.ContentLength)
 		}
 		body := &chunkReader{chunks: []string{"data: 1\n\n"}, err: errors.New("reset")}
-		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"text/event-stream"}, "Keep-Alive": {"x"}}, Body: noopCloser{body}}, nil
+		return &http.Response{StatusCode: 200, Header: http.Header{"Content-Type": {"application/json"}, "Keep-Alive": {"x"}}, Body: noopCloser{body}}, nil
 	})
 	rec := httptest.NewRecorder()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -93,7 +93,7 @@ func TestForward_RelaysAndMarksCut(t *testing.T) {
 	if err != nil || res.Status != 200 || res.Finish != model.FinishUpstreamError || !res.Cut {
 		t.Fatalf("res=%+v err=%v", res, err)
 	}
-	if rec.Body.String() != "data: 1\n\n" || rec.Header().Get("Keep-Alive") != "" || rec.Header().Get("Content-Type") != "text/event-stream" {
+	if rec.Body.String() != "data: 1\n\n" || rec.Header().Get("Keep-Alive") != "" || rec.Header().Get("Content-Type") != "application/json" {
 		t.Fatalf("client got %q %v", rec.Body.String(), rec.Header())
 	}
 }

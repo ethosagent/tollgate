@@ -60,27 +60,45 @@ func errorType(types map[int]string, status int, fallback string) string {
 	return fallback
 }
 
-// WriteError writes a JSON error body in the given shape. The error type is
-// derived from status so callers cannot pick one the shape does not know.
-// Set any extra headers (Retry-After) before calling it.
-func WriteError(w http.ResponseWriter, shape ErrorShape, status int, msg string) {
-	var body any
+// errorBody is the JSON error document for a shape.
+func errorBody(shape ErrorShape, status int, msg string) any {
 	switch shape {
 	case ShapeAnthropic:
-		body = map[string]any{
+		return map[string]any{
 			"type":  "error",
 			"error": map[string]string{"type": errorType(anthropicTypes, status, "api_error"), "message": msg},
 		}
 	case ShapeOpenAI:
-		body = map[string]any{
+		return map[string]any{
 			"error": map[string]any{"message": msg, "type": errorType(openAITypes, status, "server_error"), "param": nil, "code": nil},
 		}
-	default:
-		body = map[string]any{
-			"error": map[string]string{"type": errorType(openAITypes, status, "server_error"), "message": msg},
-		}
 	}
+	return map[string]any{
+		"error": map[string]string{"type": errorType(openAITypes, status, "server_error"), "message": msg},
+	}
+}
+
+// WriteError writes a JSON error body in the given shape. The error type is
+// derived from status so callers cannot pick one the shape does not know.
+// Set any extra headers (Retry-After) before calling it.
+func WriteError(w http.ResponseWriter, shape ErrorShape, status int, msg string) {
+	body := errorBody(shape, status, msg)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body) // the status line is already sent; nothing to recover
+}
+
+// AppendErrorEvent appends one SSE frame carrying an error to dst, for a
+// stream that has already started and so cannot change its status. Anthropic
+// streams get an "event: error" frame; the others a bare data frame holding
+// the same JSON document WriteError would send. status picks the error type
+// exactly as in WriteError.
+func AppendErrorEvent(dst []byte, shape ErrorShape, status int, msg string) []byte {
+	doc, _ := json.Marshal(errorBody(shape, status, msg)) // maps of strings and nil cannot fail
+	if shape == ShapeAnthropic {
+		dst = append(dst, "event: error\n"...)
+	}
+	dst = append(dst, "data: "...)
+	dst = append(dst, doc...)
+	return append(dst, "\n\n"...)
 }
