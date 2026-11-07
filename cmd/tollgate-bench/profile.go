@@ -14,6 +14,7 @@ import (
 // and the memory pass excluded).
 type profiles struct {
 	cpu, mem, block, mutex string
+	heap                   string // memory pass: live heap with every proxied stream open
 }
 
 // Block and mutex sampling rates while a profile is on: one blocking event
@@ -28,6 +29,7 @@ func (p *profiles) register(fs *flag.FlagSet) {
 	fs.StringVar(&p.mem, "memprofile", "", "dev: write an allocation profile (allocs) after the timed pass to this file, and one from before it to FILE.before (pprof -diff_base)")
 	fs.StringVar(&p.block, "blockprofile", "", "dev: write a block profile of the timed pass to this file")
 	fs.StringVar(&p.mutex, "mutexprofile", "", "dev: write a mutex profile of the timed pass to this file")
+	fs.StringVar(&p.heap, "heapprofile", "", "dev: write an in-use heap profile while the memory pass holds every proxied stream open")
 }
 
 // start turns on the requested profiles and returns the function that

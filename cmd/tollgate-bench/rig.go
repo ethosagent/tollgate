@@ -73,7 +73,13 @@ func newRig(ctx context.Context, cfg config, chunkDelay time.Duration) (*rig, er
 		return nil, fmt.Errorf("start: %w", err)
 	}
 	r.stops = append(r.stops, func() { _ = p.Close(context.WithoutCancel(ctx)) }) // after drops, a second Close is a no-op
-	if r.proxyURL, err = r.listen(ctx, r.stamp(p.Handler())); err != nil {
+	h := p.Handler()
+	if cfg.nullProxy {
+		np := newNullProxy(sessions)
+		r.stops = append(r.stops, np.rt.CloseIdleConnections)
+		h = np
+	}
+	if r.proxyURL, err = r.listen(ctx, r.stamp(h)); err != nil {
 		r.stop()
 		return nil, err
 	}

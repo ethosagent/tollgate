@@ -29,6 +29,7 @@ type config struct {
 	upstreamProc  bool
 	upstreamProcs int
 	serveFake     bool // internal: this process is that child
+	nullProxy     bool // control: a minimal stdlib relay replaces tollgate on the proxied path
 }
 
 func main() {
@@ -53,6 +54,7 @@ func parseFlags(args []string) (config, error) {
 	c.prof.register(fs)
 	fs.BoolVar(&c.upstreamProc, "upstream-proc", false, "run the fake upstream in a child process (separates its runtime from the proxy's)")
 	fs.IntVar(&c.upstreamProcs, "upstream-gomaxprocs", 0, "GOMAXPROCS of the -upstream-proc child; 0 keeps the default. Pin this process with the GOMAXPROCS env var")
+	fs.BoolVar(&c.nullProxy, "null-proxy", false, "control: measure a minimal stdlib relay in tollgate's place (what any proxy hop costs on this rig)")
 	fs.BoolVar(&c.serveFake, "serve-fake", false, "internal: serve only the fake upstream (the -upstream-proc child)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
@@ -129,7 +131,7 @@ func measure(ctx context.Context, cfg config) (report, error) {
 		TotalCalls: len(pairs), WarmupCalls: cfg.sessions, ChunkDelay: cfg.chunkDelay.String(),
 		Direct: latencyOf(t.directTTFB, t.directTotal), Proxy: latencyOf(t.proxyTTFB, t.proxyTotal),
 		Overhead: overheadOf(t), PeakStreams: l.peak.Load(), Statusz: drops,
-		UpstreamProc: cfg.upstreamProc, GOMAXPROCS: runtime.GOMAXPROCS(0),
+		UpstreamProc: cfg.upstreamProc, NullProxy: cfg.nullProxy, GOMAXPROCS: runtime.GOMAXPROCS(0),
 	}, nil
 }
 

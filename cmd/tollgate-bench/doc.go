@@ -29,7 +29,10 @@
 // fake's goroutines and GC no longer share a scheduler with the proxy; its
 // stamps then cross over as wall-clock times. Dev-only profiles of the timed
 // pass: -cpuprofile, -memprofile (plus FILE.before for pprof -diff_base),
-// -blockprofile, -mutexprofile. Dependency law
+// -blockprofile, -mutexprofile; -heapprofile is the live heap while the
+// memory pass holds every proxied stream open. -null-proxy is the control:
+// a minimal stdlib relay replaces tollgate, so its figures are what any
+// proxy hop costs on the rig. Dependency law
 // (internal/archtest, layer "tool", rule D5): the public API, testkit
 // included, never internal/. It is a developer tool and is not shipped
 // (ADR 0014).

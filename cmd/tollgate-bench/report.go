@@ -73,6 +73,7 @@ type report struct {
 	Memory          memory       `json:"memory"`
 	Statusz         dropCounters `json:"statusz"`
 	UpstreamProc    bool         `json:"upstream_proc"` // the fake ran in its own process
+	NullProxy       bool         `json:"null_proxy"`    // control run: tollgate replaced by a minimal relay
 	GOMAXPROCS      int          `json:"gomaxprocs"`    // of the client+proxy process
 }
 

@@ -10,6 +10,9 @@ import (
 	"time"
 )
 
+// memProxyTag tags the memory pass's proxied calls.
+const memProxyTag = "mem-p"
+
 // minHold is the shortest chunk delay the memory pass uses, so that every
 // session's stream is open at the moment memory is read.
 const minHold = 100 * time.Millisecond
@@ -30,7 +33,7 @@ func memoryPass(ctx context.Context, cfg config) (memory, error) {
 	if err != nil {
 		return m, err
 	}
-	proxied, err := held(ctx, cfg, r.proxyTarget(cfg.fixture), "mem-p")
+	proxied, err := held(ctx, cfg, r.proxyTarget(cfg.fixture), memProxyTag)
 	if err != nil {
 		return m, err
 	}
@@ -62,8 +65,12 @@ func held(ctx context.Context, cfg config, tg target, tag string) (perStream, er
 		wg.Go(func() { _, errs[s] = l.call(ctx, tg, tag+"-"+strconv.Itoa(s)) })
 	}
 	mem, gs, streams := l.atPeak(ctx, int64(cfg.sessions))
+	var perr error
+	if tag == memProxyTag {
+		perr = writeProfile("heap", cfg.prof.heap)
+	}
 	wg.Wait()
-	if err := errors.Join(errs...); err != nil {
+	if err := errors.Join(append(errs, perr)...); err != nil {
 		return perStream{}, err
 	}
 	out := perStream{streams: streams}
