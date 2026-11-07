@@ -1,37 +1,46 @@
 package testkit_test
 
 import (
-	"context"
+	"os"
+	"strings"
 	"testing"
-
-	"github.com/ethosagent/tollgate"
-	"github.com/ethosagent/tollgate/testkit"
 )
 
-// auditHook is the extension in the README's "Testing your extension".
-type auditHook struct{ tollgate.NoopHook }
-
-func (auditHook) Name() string { return "audit" }
-
-func (auditHook) Before(_ context.Context, c *tollgate.Call) (*tollgate.Response, error) {
-	c.Meta = map[string]any{"audited": true}
-	return nil, nil
+// readmeExample returns the first go code block after heading in README.md.
+func readmeExample(t *testing.T, heading string) string {
+	t.Helper()
+	readme, err := os.ReadFile("../README.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, ok := strings.Cut(string(readme), "\n"+heading+"\n")
+	if !ok {
+		t.Fatalf("README.md has no %q section", heading)
+	}
+	_, code, ok := strings.Cut(section, "```go\n")
+	if !ok {
+		t.Fatalf("README.md %q has no go code block", heading)
+	}
+	code, _, ok = strings.Cut(code, "```\n")
+	if !ok {
+		t.Fatalf("README.md %q: unterminated code block", heading)
+	}
+	return code
 }
 
-// TestReadmeExample keeps the README snippet compiling and true.
-func TestReadmeExample(t *testing.T) {
-	rec := testkit.Run(t, auditHook{}, "openai/chat-stream-text", "anthropic/messages")
-
-	before := rec.Of(testkit.StageBefore)
-	if len(before) != 2 || before[1].Call.Model != "claude-sonnet-4-5" {
-		t.Fatalf("Before saw %d calls: %+v", len(before), before)
+// TestReadme_ExampleIsThisFile ties the README's example to
+// readme_example_test.go, where it compiles and TestAuditHook runs it.
+func TestReadme_ExampleIsThisFile(t *testing.T) {
+	block := readmeExample(t, "## Testing your extension")
+	src, err := os.ReadFile("readme_example_test.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, a := range rec.Of(testkit.StageAfter) {
-		if a.Metric.Finish != tollgate.FinishOK {
-			t.Errorf("%s ended %q", a.Call.Model, a.Metric.Finish)
-		}
+	_, body, _ := strings.Cut(string(src), "package testkit_test\n\n")
+	if body != block {
+		t.Fatalf("README.md's example and readme_example_test.go differ: make them equal\nREADME:\n%s\nfile:\n%s", block, body)
 	}
-	if got := rec.Replies[0].Status; got != 200 {
-		t.Fatalf("client status = %d", got)
+	if !strings.Contains(block, "func TestAuditHook(t *testing.T)") {
+		t.Fatal("the README example no longer holds TestAuditHook")
 	}
 }

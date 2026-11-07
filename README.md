@@ -45,11 +45,22 @@ received, in order, with copies of its arguments. No network, no keys.
 
 ```go
 import (
+	"context"
 	"testing"
 
 	"github.com/ethosagent/tollgate"
 	"github.com/ethosagent/tollgate/testkit"
 )
+
+// auditHook is the extension under test: it tags every call in Before.
+type auditHook struct{ tollgate.NoopHook }
+
+func (auditHook) Name() string { return "audit" }
+
+func (auditHook) Before(_ context.Context, c *tollgate.Call) (*tollgate.Response, error) {
+	c.Meta = map[string]any{"audited": true}
+	return nil, nil
+}
 
 func TestAuditHook(t *testing.T) {
 	rec := testkit.Run(t, auditHook{}, "openai/chat-stream-text", "anthropic/messages")
@@ -58,10 +69,8 @@ func TestAuditHook(t *testing.T) {
 	if len(before) != 2 || before[1].Call.Model != "claude-sonnet-4-5" {
 		t.Fatalf("Before saw %d calls: %+v", len(before), before)
 	}
-	for _, a := range rec.Of(testkit.StageAfter) { // the Metric each call ended with
-		if a.Metric.Finish != tollgate.FinishOK {
-			t.Errorf("%s ended %q", a.Call.Model, a.Metric.Finish)
-		}
+	if n := len(rec.Of(testkit.StageAfter)); n != 0 { // only the stages it implements
+		t.Fatalf("After ran %d times; auditHook only implements Before", n)
 	}
 	if rec.Replies[0].Status != 200 { // what the client got
 		t.Fatalf("client status = %d", rec.Replies[0].Status)
@@ -69,8 +78,11 @@ func TestAuditHook(t *testing.T) {
 }
 ```
 
-`testkit.RunWith` takes a `Config` for several plugins at once, request
-headers (a tenant key for an `Authenticator`), and upstream faults. Credential
+`testkit.RunWith` takes a `Config` for several plugins at once (hooks and
+finalizers in order; one `Authenticator` and one `MetricSink` at most), request
+headers (a tenant key for an `Authenticator`), and upstream faults (latency,
+a cut stream, a status). A hook is offered only the stages it implements, as
+in production. Credential
 headers are used but never recorded. `testkit.FixtureNames()` lists the
 fixtures. A worked example is `ext/auth/statickeys/testkit_test.go`.
 
