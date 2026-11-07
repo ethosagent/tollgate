@@ -24,7 +24,9 @@ type ProviderResolver interface {
 }
 
 // SessionStrategy attributes a call to a Session and reports sessions that
-// went quiet on Closed.
+// went quiet on Closed. Resolve runs once per call, after the request is
+// parsed (Call.Messages is set); the caller's session header, which the core
+// strips before forwarding, is in Call.SessionHeader (ADR 0012).
 type SessionStrategy interface {
 	Resolve(ctx context.Context, t Tenant, c *Call) Session
 	Closed() <-chan Session

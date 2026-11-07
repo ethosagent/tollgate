@@ -95,10 +95,15 @@ type Message struct {
 
 // Call is one LLM request, normalised. Hooks may mutate Body in Before.
 type Call struct {
-	ID       string
-	Tenant   Tenant
-	Session  Session
-	Provider Provider
+	ID      string
+	Tenant  Tenant
+	Session Session
+	// SessionHeader is the caller's session header (HeaderNames.Session),
+	// trimmed, or "" when absent. The core strips the header itself before
+	// forwarding, so this is where a SessionStrategy reads it (ADR 0012).
+	// The core sets it before SessionStrategy.Resolve and never changes it.
+	SessionHeader string
+	Provider      Provider
 	// Path is the inbound request path, provider prefix included, e.g.
 	// "/openai/v1/chat/completions". Admission sees it before the provider is
 	// resolved; the upstream path is derived later and is not stored here.

@@ -10,12 +10,6 @@ import (
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
-// HeaderMeta is the Call.Meta key under which the core passes the caller's
-// session header value (tollgate strips the header itself before forwarding,
-// so the strategy cannot read it from Call.Header). Absent when the request
-// had no such header.
-const HeaderMeta = "tollgate.session_header"
-
 // Config configures a Strategy. A zero field takes its default.
 type Config struct {
 	TTL          time.Duration // quiet time before a session closes; default 5m
@@ -104,13 +98,13 @@ func (s *Strategy) Stats() Stats {
 		Agree: s.agree.Load(), Disagree: s.disagree.Load()}
 }
 
-// Resolve attributes c to a session: the caller's header (Call.Meta[HeaderMeta])
+// Resolve attributes c to a session: the caller's header (Call.SessionHeader)
 // when usable, keyed by tenant, else a prediction from c.Messages.
 func (s *Strategy) Resolve(_ context.Context, t model.Tenant, c *model.Call) model.Session {
 	now := time.Now()
 	var sess model.Session
 	var gone []model.Session
-	if id, _ := c.Meta[HeaderMeta].(string); validHeaderID(id) {
+	if id := c.SessionHeader; validHeaderID(id) {
 		sess, gone = s.fromHeader(t.ID, id, now)
 		s.observe(t.ID, id, sess.Calls, c.Messages, now)
 	} else {

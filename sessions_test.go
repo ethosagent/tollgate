@@ -191,13 +191,17 @@ func (h *closedOnlyHook) count() int { h.mu.Lock(); defer h.mu.Unlock(); return 
 
 // fakeStrategy is a host-supplied SessionStrategy.
 type fakeStrategy struct {
-	closed chan tollgate.Session
-	panics bool
+	closed  chan tollgate.Session
+	panics  bool
+	headers chan string // Call.SessionHeader of each Resolve, when not nil
 }
 
-func (f *fakeStrategy) Resolve(context.Context, tollgate.Tenant, *tollgate.Call) tollgate.Session {
+func (f *fakeStrategy) Resolve(_ context.Context, _ tollgate.Tenant, c *tollgate.Call) tollgate.Session {
 	if f.panics {
 		panic("strategy bug")
+	}
+	if f.headers != nil {
+		f.headers <- c.SessionHeader
 	}
 	return tollgate.Session{ID: "host-session", Source: tollgate.SessionFromHeader}
 }
@@ -212,6 +216,39 @@ func TestSession_HostStrategyReplacesTheDefault(t *testing.T) {
 	eventually(t, "host session closed", func() bool { return len(h.closedSessions()) == 1 })
 	if got := h.sessions(); len(got) != 1 || got[0].ID != "host-session" {
 		t.Fatalf("hook saw %+v, want the host strategy's session", got)
+	}
+}
+
+// TestSession_HostStrategyReadsTheSessionHeader: the core strips the session
+// header before forwarding, so a strategy outside the core (which may not
+// import internal/) reads it from the documented Call.SessionHeader, under
+// whatever name HeaderNames.Session gives it.
+func TestSession_HostStrategyReadsTheSessionHeader(t *testing.T) {
+	tests := []struct {
+		name, header, value, want string
+	}{
+		{name: "default header name", header: "x-session-id", value: " run-9 ", want: "run-9"},
+		{name: "host-chosen header name", header: "x-run", value: "r-1", want: "r-1"},
+		{name: "no header", want: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up := testkit.NewFakeUpstream(t, testkit.Options{})
+			fs := &fakeStrategy{closed: make(chan tollgate.Session), headers: make(chan string, 1)}
+			opts := tollgate.Options{Sessions: fs}
+			if tt.header != "x-session-id" {
+				opts.Headers.Session = "x-run"
+			}
+			base, _, _ := newSessionProxy(t, opts)
+			var kv []string
+			if tt.header != "" {
+				kv = []string{tt.header, tt.value}
+			}
+			_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up, kv...)))
+			if got := <-fs.headers; got != tt.want {
+				t.Fatalf("Call.SessionHeader = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

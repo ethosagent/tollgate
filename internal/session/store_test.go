@@ -10,10 +10,7 @@ import (
 )
 
 func resolve(s *Strategy, tenant, header string, msgs ...model.Message) model.Session {
-	c := &model.Call{Messages: msgs, Meta: map[string]any{}}
-	if header != "" {
-		c.Meta[HeaderMeta] = header
-	}
+	c := &model.Call{Messages: msgs, SessionHeader: header}
 	return s.Resolve(context.Background(), model.Tenant{ID: tenant}, c)
 }
 

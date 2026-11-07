@@ -40,9 +40,7 @@ func (p *Proxy) initSessions() {
 // session: it is still served.
 func (p *Proxy) attributeSession(ctx context.Context, o *outcome) {
 	c := o.call
-	_, hasHeader := c.Meta[session.HeaderMeta]
-	defer delete(c.Meta, session.HeaderMeta) // an input to the strategy, not for hooks
-	if !hasHeader && len(c.Messages) == 0 {
+	if c.SessionHeader == "" && len(c.Messages) == 0 {
 		return
 	}
 	resolve := func(ctx context.Context) (Session, error) {
