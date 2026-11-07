@@ -27,7 +27,9 @@ const sessionHeader = "x-session-id"
 type Config struct {
 	// Plugins are the extensions under test. Each may implement any of
 	// tollgate.Authenticator, tollgate.Hook, tollgate.Finalizer and
-	// tollgate.MetricSink; one value may implement several.
+	// tollgate.MetricSink; one value may implement several. Hooks and
+	// Finalizers may be several and run in this order; a second
+	// Authenticator or MetricSink fails the run, since tollgate takes one.
 	Plugins []any
 	// Fixtures are upstream response names (see FixtureNames), replayed one
 	// call each, in order, over one session. A name must be a response, not a
@@ -94,7 +96,7 @@ func RunWith(t testing.TB, cfg Config) *Recording {
 	srv := httptest.NewServer(p.Handler())
 	t.Cleanup(srv.Close)
 	replies := drive(ctx, t, srv, p, cfg)
-	if len(w.hooks) > 0 {
+	if w.closes {
 		sess.closeAll()
 		awaitRun(t, "OnSessionClosed", func() bool { return rec.count(StageSessionClosed) >= sess.emitted() })
 	}

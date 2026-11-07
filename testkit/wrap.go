@@ -35,36 +35,70 @@ func (a authRec) ConsumedHeaders() []string {
 	return nil
 }
 
-type hookRec struct {
+// hookBase is what every stage wrapper of one Hook shares. Each wrapper
+// overrides exactly one stage, so the core offers it that stage and no other
+// (see overrides); hookRecs registers one per stage the plugin implements.
+type hookBase struct {
+	tollgate.NoopHook
 	next tollgate.Hook
 	rec  *recorder
 }
 
-func (h hookRec) Name() string { return h.next.Name() }
+func (h hookBase) Name() string { return h.next.Name() }
 
-func (h hookRec) Before(ctx context.Context, c *tollgate.Call) (*tollgate.Response, error) {
+type beforeRec struct{ hookBase }
+
+func (h beforeRec) Before(ctx context.Context, c *tollgate.Call) (*tollgate.Response, error) {
 	h.rec.add(Invocation{Stage: StageBefore, Plugin: h.Name(), Call: h.rec.cloneCall(c)}) // input, before the hook can change it
 	return h.next.Before(ctx, c)
 }
 
-func (h hookRec) OnEvent(ctx context.Context, c *tollgate.Call, e tollgate.Event) {
+type eventRec struct{ hookBase }
+
+func (h eventRec) OnEvent(ctx context.Context, c *tollgate.Call, e tollgate.Event) {
 	h.rec.add(Invocation{Stage: StageOnEvent, Plugin: h.Name(), Call: h.rec.cloneCall(c), Event: cloneEvent(e)})
 	h.next.OnEvent(ctx, c, e)
 }
 
-func (h hookRec) OnResponse(ctx context.Context, c *tollgate.Call, r *tollgate.Response) (*tollgate.Response, error) {
+type responseRec struct{ hookBase }
+
+func (h responseRec) OnResponse(ctx context.Context, c *tollgate.Call, r *tollgate.Response) (*tollgate.Response, error) {
 	h.rec.add(Invocation{Stage: StageOnResponse, Plugin: h.Name(), Call: h.rec.cloneCall(c), Response: cloneResponse(r)})
 	return h.next.OnResponse(ctx, c, r)
 }
 
-func (h hookRec) After(ctx context.Context, c *tollgate.Call, m tollgate.Metric) {
+type afterRec struct{ hookBase }
+
+func (h afterRec) After(ctx context.Context, c *tollgate.Call, m tollgate.Metric) {
 	h.rec.add(Invocation{Stage: StageAfter, Plugin: h.Name(), Call: h.rec.cloneCall(c), Metric: &m})
 	h.next.After(ctx, c, m)
 }
 
-func (h hookRec) OnSessionClosed(ctx context.Context, s tollgate.Session) {
+type closedRec struct{ hookBase }
+
+func (h closedRec) OnSessionClosed(ctx context.Context, s tollgate.Session) {
 	h.rec.add(Invocation{Stage: StageSessionClosed, Plugin: h.Name(), Session: &s})
 	h.next.OnSessionClosed(ctx, s)
+}
+
+// hookRecs returns one recording wrapper per stage h implements itself, in
+// stage order. A method h only inherits from NoopHook gets none, as in the
+// core, so it is neither offered nor recorded.
+func hookRecs(h tollgate.Hook, rec *recorder) []tollgate.Hook {
+	b := hookBase{next: h, rec: rec}
+	var out []tollgate.Hook
+	for _, s := range []struct {
+		method string
+		w      tollgate.Hook
+	}{
+		{"Before", beforeRec{b}}, {"OnEvent", eventRec{b}}, {"OnResponse", responseRec{b}},
+		{"After", afterRec{b}}, {"OnSessionClosed", closedRec{b}},
+	} {
+		if overrides(h, s.method) {
+			out = append(out, s.w)
+		}
+	}
+	return out
 }
 
 type finRec struct {

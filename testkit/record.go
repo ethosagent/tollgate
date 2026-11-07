@@ -36,7 +36,9 @@ type RequestInfo struct {
 
 // Invocation is one call a plugin received, with copies of its arguments and,
 // where the plugin returns something, of what it returned. Only the fields of
-// its Stage are set.
+// its Stage are set. A Hook is offered, and recorded at, only the stages it
+// implements itself, as in the core: a method it inherits from an embedded
+// tollgate.NoopHook is never called.
 type Invocation struct {
 	Seq    int    // 1-based arrival order across the whole Recording
 	Stage  Stage  // which entry point was called

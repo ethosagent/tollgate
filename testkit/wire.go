@@ -2,6 +2,7 @@ package testkit
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"slices"
@@ -19,10 +20,14 @@ type wired struct {
 	sink       tollgate.MetricSink
 	finalizers []tollgate.Finalizer
 	hooks      []tollgate.Hook
+	closes     bool // some hook implements OnSessionClosed itself
 }
 
 // wirePlugins wraps each plugin in a recorder for every interface it
-// implements. It fails t for a value that implements none.
+// implements. It fails t for a value that implements none, and for a second
+// Authenticator or MetricSink: tollgate takes one of each, so the harness
+// would otherwise run one of them silently untested. Hooks and Finalizers
+// may be several, as in Options and Proxy.Use.
 func wirePlugins(t testing.TB, plugins []any, rec *recorder) wired {
 	t.Helper()
 	for _, n := range baseCredentials {
@@ -31,29 +36,44 @@ func wirePlugins(t testing.TB, plugins []any, rec *recorder) wired {
 	rec.creds[strings.ToLower(tollgate.DefaultHeaderNames().TenantKey)] = true
 	var w wired
 	for _, pl := range plugins {
-		used := false
-		if a, ok := pl.(tollgate.Authenticator); ok {
-			w.auth, used = authRec{a, rec}, true
-			if hc, ok := pl.(tollgate.HeaderConsumer); ok {
-				for _, h := range hc.ConsumedHeaders() {
-					rec.creds[strings.ToLower(h)] = true
-				}
-			}
-		}
-		if h, ok := pl.(tollgate.Hook); ok {
-			w.hooks, used = append(w.hooks, hookRec{h, rec}), true
-		}
-		if f, ok := pl.(tollgate.Finalizer); ok {
-			w.finalizers, used = append(w.finalizers, finRec{f, rec}), true
-		}
-		if s, ok := pl.(tollgate.MetricSink); ok {
-			w.sink, used = sinkRec{s, rec}, true
+		used, err := w.add(pl, rec)
+		if err != nil {
+			t.Fatalf("testkit.Run: %v", err)
 		}
 		if !used {
 			t.Fatalf("testkit.Run: %T is not an Authenticator, Hook, Finalizer or MetricSink", pl)
 		}
 	}
 	return w
+}
+
+// add wires one plugin into every seam it implements.
+func (w *wired) add(pl any, rec *recorder) (used bool, err error) {
+	if a, ok := pl.(tollgate.Authenticator); ok {
+		if w.auth != nil {
+			return false, fmt.Errorf("%T is a second Authenticator; tollgate takes one (Options.Auth): test them in separate runs", pl)
+		}
+		w.auth, used = authRec{a, rec}, true
+		if hc, ok := pl.(tollgate.HeaderConsumer); ok {
+			for _, h := range hc.ConsumedHeaders() {
+				rec.creds[strings.ToLower(h)] = true
+			}
+		}
+	}
+	if s, ok := pl.(tollgate.MetricSink); ok {
+		if w.sink != nil {
+			return false, fmt.Errorf("%T is a second MetricSink; tollgate takes one (Options.Metrics): test them in separate runs", pl)
+		}
+		w.sink, used = sinkRec{s, rec}, true
+	}
+	if h, ok := pl.(tollgate.Hook); ok {
+		w.hooks, used = append(w.hooks, hookRecs(h, rec)...), true
+		w.closes = w.closes || overrides(h, "OnSessionClosed")
+	}
+	if f, ok := pl.(tollgate.Finalizer); ok {
+		w.finalizers, used = append(w.finalizers, finRec{f, rec}), true
+	}
+	return used, nil
 }
 
 // fixedResolver sends every call to one upstream, picking the wire format from

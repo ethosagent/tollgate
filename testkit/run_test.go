@@ -15,8 +15,9 @@ import (
 	"github.com/ethosagent/tollgate/testkit"
 )
 
-// probeHook is a Hook that does nothing but can mutate the call or panic, to
-// show what the harness records around it.
+// probeHook is a Hook that implements every stage, does nothing, and can
+// mutate the call or panic in Before, to show what the harness records
+// around it.
 type probeHook struct {
 	tollgate.NoopHook
 	mutate bool
@@ -34,6 +35,13 @@ func (h probeHook) Before(_ context.Context, c *tollgate.Call) (*tollgate.Respon
 		c.Meta = map[string]any{"seen": true}
 	}
 	return nil, nil
+}
+
+func (probeHook) OnEvent(context.Context, *tollgate.Call, tollgate.Event) {}
+func (probeHook) After(context.Context, *tollgate.Call, tollgate.Metric)  {}
+func (probeHook) OnSessionClosed(context.Context, tollgate.Session)       {}
+func (probeHook) OnResponse(_ context.Context, _ *tollgate.Call, r *tollgate.Response) (*tollgate.Response, error) {
+	return r, nil
 }
 
 type rejectAuth struct{}
@@ -257,6 +265,38 @@ func TestRun_RejectsBadInput(t *testing.T) {
 			<-done
 			if !strings.Contains(ftb.msg, tt.wantText) {
 				t.Fatalf("Fatalf message = %q, want it to contain %q", ftb.msg, tt.wantText)
+			}
+		})
+	}
+}
+
+// fatalOf runs RunWith on a failTB and returns its Fatalf message ("" if none).
+func fatalOf(t *testing.T, cfg testkit.Config) string {
+	t.Helper()
+	ftb := &failTB{TB: t}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		testkit.RunWith(ftb, cfg)
+	}()
+	<-done
+	return ftb.msg
+}
+
+func TestRunWith_RejectsASecondPluginForASingleInstanceSeam(t *testing.T) {
+	tests := []struct {
+		name     string
+		plugins  []any
+		wantText string
+	}{
+		{"two Authenticators", []any{rejectAuth{}, rejectAuth{}}, "second Authenticator"},
+		{"two MetricSinks", []any{&captureSink{}, &captureSink{}}, "second MetricSink"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			msg := fatalOf(t, testkit.Config{Plugins: tt.plugins, Fixtures: []string{"openai/chat"}})
+			if !strings.Contains(msg, tt.wantText) {
+				t.Fatalf("Fatalf message = %q, want it to contain %q", msg, tt.wantText)
 			}
 		})
 	}
