@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/model"
@@ -83,5 +84,52 @@ func TestForward_ConsumerSeesMidStreamDrop(t *testing.T) {
 	}
 	if q.End() != (End{Finish: model.FinishUpstreamError}) {
 		t.Fatalf("end = %+v", q.End())
+	}
+}
+
+// TestFrameQueue_GrowsWithTheBacklogNotTheCap: an open stream whose consumer
+// keeps up holds a small ring, not EventBuffer slots; a backlog grows the
+// ring up to the cap, in order, and no further.
+func TestFrameQueue_GrowsWithTheBacklogNotTheCap(t *testing.T) {
+	q := NewFrameQueue(1024)
+	q.offer([]byte("a"))
+	if f, _, ok := q.Next(); !ok || string(f) != "a" || len(q.ring) != minQueueSlots {
+		t.Fatalf("first = %q %v, ring = %d slots, want %d", f, ok, len(q.ring), minQueueSlots)
+	}
+	small := NewFrameQueue(20)
+	for i := range 25 {
+		small.offer([]byte{byte('a' + i)})
+	}
+	small.finish(model.FinishOK)
+	got := readAllFrames(small)
+	if len(got) != 20 || len(small.ring) != 20 || small.Dropped() != 5 || small.End().Gap != 5 {
+		t.Fatalf("got %d frames, ring %d, dropped %d, end %+v", len(got), len(small.ring), small.Dropped(), small.End())
+	}
+	for i, d := range got {
+		if d.frame != string(rune('a'+i)) {
+			t.Fatalf("frame %d = %q, want order kept across growth", i, d.frame)
+		}
+	}
+}
+
+// TestFrameQueue_ConcurrentConsumerSeesEveryFrameInOrder wraps the ring
+// around while a consumer reads (run with -race).
+func TestFrameQueue_ConcurrentConsumerSeesEveryFrameInOrder(t *testing.T) {
+	const frames = 5000
+	q := NewFrameQueue(frames)
+	done := make(chan []delivered)
+	go func() { done <- readAllFrames(q) }()
+	for i := range frames {
+		q.offer([]byte(strconv.Itoa(i)))
+	}
+	q.finish(model.FinishOK)
+	got := <-done
+	if len(got) != frames || q.Dropped() != 0 || q.bytes.Load() != 0 {
+		t.Fatalf("got %d frames, dropped %d, bytes %d", len(got), q.Dropped(), q.bytes.Load())
+	}
+	for i, d := range got {
+		if d.frame != strconv.Itoa(i) || d.gap != 0 {
+			t.Fatalf("frame %d = %+v", i, d)
+		}
 	}
 }
