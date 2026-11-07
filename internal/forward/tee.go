@@ -16,12 +16,12 @@ import (
 // close q. It returns the bytes written; errors are as for Relay.
 func Tee(dst http.ResponseWriter, src io.Reader, q *FrameQueue, begin func()) (int64, error) {
 	rc := http.NewResponseController(dst)
-	bp := relayBufs.Get().(*[]byte)
-	defer relayBufs.Put(bp)
-	buf := *bp
+	rb := newRelayBuf()
+	defer rb.release()
 	var sc Scanner
 	var total int64
 	for {
+		buf := rb.bytes()
 		n, rerr := src.Read(buf)
 		if n > 0 {
 			if begin != nil {
@@ -48,5 +48,6 @@ func Tee(dst http.ResponseWriter, src io.Reader, q *FrameQueue, begin func()) (i
 		if rerr != nil {
 			return total, fmt.Errorf("%w: %w", ErrUpstreamRead, rerr)
 		}
+		rb.read(n) // buf[:n] is written and scanned: it may be returned now
 	}
 }

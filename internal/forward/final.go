@@ -216,16 +216,18 @@ func (r *finalRun) segment(src io.Reader, recovery bool) (res segResult) {
 	if recovery {
 		r.splice.Begin()
 	}
-	bp := relayBufs.Get().(*[]byte)
-	defer relayBufs.Put(bp)
+	rb := newRelayBuf()
+	defer rb.release()
 	for {
-		n, rerr := src.Read(*bp)
+		buf := rb.bytes()
+		n, rerr := src.Read(buf)
 		if n > 0 {
-			if err := s.feed((*bp)[:n]); err != nil {
+			if err := s.feed(buf[:n]); err != nil {
 				return segResult{err: err}
 			}
 		}
 		if rerr == nil {
+			rb.read(n) // fed: feed copies what it keeps
 			continue
 		}
 		if err := s.end(); err != nil {

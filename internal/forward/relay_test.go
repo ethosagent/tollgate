@@ -3,10 +3,14 @@ package forward
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/ethosagent/tollgate/internal/model"
 )
 
 // recWriter is a ResponseWriter that records writes and flushes.
@@ -45,7 +49,9 @@ func (r *chunkReader) Read(p []byte) (int, error) {
 		return 0, r.err
 	}
 	n := copy(p, r.chunks[0])
-	r.chunks = r.chunks[1:]
+	if r.chunks[0] = r.chunks[0][n:]; r.chunks[0] == "" { // a chunk larger than p is read over several calls
+		r.chunks = r.chunks[1:]
+	}
 	return n, nil
 }
 
@@ -109,5 +115,49 @@ func BenchmarkRelay(b *testing.B) {
 		if _, err := Relay(discardWriter{}, bytes.NewReader(data)); err != nil {
 			b.Fatal(err)
 		}
+	}
+}
+
+// TestRelayBuf_SmallUntilARead_FillsIt: a stream reads into a small buffer
+// until one read fills it; from then on (bulk) it reads into a big one.
+func TestRelayBuf_SmallUntilAReadFillsIt(t *testing.T) {
+	rb := newRelayBuf()
+	defer rb.release()
+	if len(rb.bytes()) != smallRelayBufSize {
+		t.Fatalf("first buffer = %d bytes, want %d", len(rb.bytes()), smallRelayBufSize)
+	}
+	rb.read(100)
+	if len(rb.bytes()) != smallRelayBufSize {
+		t.Fatal("a short read moved to the big buffer")
+	}
+	rb.read(smallRelayBufSize)
+	if len(rb.bytes()) != relayBufSize {
+		t.Fatalf("after a full read: %d bytes, want %d", len(rb.bytes()), relayBufSize)
+	}
+	rb.read(10)
+	if len(rb.bytes()) != relayBufSize {
+		t.Fatal("a big buffer went back to small mid-response")
+	}
+}
+
+// TestTee_BulkBodyCrossesTheBufferSwitchByteExact: a body far over the
+// small buffer, read whole-buffer at a time, arrives unchanged and its SSE
+// frames all reach the queue across the switch.
+func TestTee_BulkBodyCrossesTheBufferSwitchByteExact(t *testing.T) {
+	var body bytes.Buffer
+	for i := range 2000 {
+		fmt.Fprintf(&body, "data: {\"n\":%d,\"pad\":%q}\n\n", i, strings.Repeat("x", i%97))
+	}
+	rec := httptest.NewRecorder()
+	q := NewFrameQueue(4096)
+	if _, err := Tee(rec, bytes.NewReader(body.Bytes()), q, nil); err != nil {
+		t.Fatal(err)
+	}
+	q.finish(model.FinishOK)
+	if !bytes.Equal(rec.Body.Bytes(), body.Bytes()) {
+		t.Fatal("relayed body differs")
+	}
+	if got := readAllFrames(q); len(got) != 2000 || got[1999].frame != fmt.Sprintf("data: {\"n\":1999,\"pad\":%q}", strings.Repeat("x", 1999%97)) {
+		t.Fatalf("frames = %d, last = %+v", len(got), got[len(got)-1])
 	}
 }
