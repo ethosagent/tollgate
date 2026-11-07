@@ -39,7 +39,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 // request was answered; release, if not nil, must be called when the call ends.
 func (p *Proxy) prepare(r *http.Request, o *outcome) (req forward.Request, release func(), ok bool) {
 	l, call := p.opts.Limits, o.call
-	tenant, err := chain.Within(r.Context(), l.ExtensionDeadline, func(ctx context.Context) (Tenant, error) {
+	tenant, err := guarded(r.Context(), p.inline.auth, l.ExtensionDeadline, func(ctx context.Context) (Tenant, error) {
 		return p.opts.Auth.Authenticate(ctx, r)
 	})
 	if err != nil {
@@ -49,9 +49,7 @@ func (p *Proxy) prepare(r *http.Request, o *outcome) (req forward.Request, relea
 	o.tenant = tenant.ID
 	call.Tenant, call.Header, call.Meta = tenant, p.reqHeaders.Filter(r.Header), map[string]any{}
 	call.SessionHeader = strings.TrimSpace(r.Header.Get(p.opts.Headers.Session)) // the header itself is stripped
-	release, err = chain.WithinLate(r.Context(), l.AdmissionDeadline, func(ctx context.Context) (func(), error) {
-		return p.opts.Admission.Acquire(ctx, tenant, call)
-	}, releaseLate)
+	release, err = p.acquire(r.Context(), tenant, call)
 	if err != nil {
 		if !chain.IsPanic(err) {
 			o.w.Header().Set("Retry-After", strconv.Itoa(model.RetryAfterSeconds(err)))
@@ -59,7 +57,7 @@ func (p *Proxy) prepare(r *http.Request, o *outcome) (req forward.Request, relea
 		p.fail(r, o, "admission", err, http.StatusTooManyRequests)
 		return req, nil, false
 	}
-	res, err := chain.Within(r.Context(), l.ExtensionDeadline, func(ctx context.Context) (resolved, error) {
+	res, err := guarded(r.Context(), p.inline.resolver, l.ExtensionDeadline, func(ctx context.Context) (resolved, error) {
 		return p.resolve(ctx, r, tenant)
 	})
 	if err != nil {
@@ -77,6 +75,16 @@ func (p *Proxy) prepare(r *http.Request, o *outcome) (req forward.Request, relea
 		return req, release, false
 	}
 	return forward.Request{Method: r.Method, Target: res.target, Header: call.Header, Body: call.Body}, release, true
+}
+
+// acquire runs Admission.Acquire: inline for the built-in Unlimited, else
+// under AdmissionDeadline with a late grant released at once.
+func (p *Proxy) acquire(ctx context.Context, tenant Tenant, call *Call) (func(), error) {
+	fn := func(ctx context.Context) (func(), error) { return p.opts.Admission.Acquire(ctx, tenant, call) }
+	if p.inline.admission {
+		return chain.Guard(ctx, fn)
+	}
+	return chain.WithinLate(ctx, p.opts.Limits.AdmissionDeadline, fn, releaseLate)
 }
 
 // releaseLate frees a slot an Admission granted after its deadline: the call

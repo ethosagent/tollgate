@@ -43,6 +43,7 @@ type Proxy struct {
 	adminH    http.Handler
 	inflight  atomic.Int64 // calls inside serveProxy
 
+	inline   inlineSeams // built-in extensions run without a deadline goroutine (builtin.go)
 	stats    hookStats
 	sessions sessionState
 }
@@ -67,6 +68,7 @@ func New(opts Options) (*Proxy, error) {
 		opts:       opts,
 		reqHeaders: forward.NewHeaderFilter(append([]string{h.TenantKey, h.Session, h.UpstreamURL}, opts.consumedHeaders()...)...),
 		idPrefix:   rand.Text()[:12] + "-",
+		inline:     builtinSeams(opts),
 	}
 	p.fin = newFinalizers(opts)
 	p.chain.Store(chain.New(nil, opts.Logger, chain.Limits{Hook: opts.Limits.HookBeforeDeadline, Total: opts.Limits.HookChainDeadline}))
