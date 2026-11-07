@@ -264,3 +264,16 @@ func TestQueue_ConcurrentOffersAreAllWrittenOrCounted(t *testing.T) {
 		t.Fatalf("written %d + dropped %d != 4000 (stats %+v)", n, st.Dropped, st)
 	}
 }
+
+// An Offer can pass the closed check, be descheduled while Close drains and
+// the writer exits, and then land in the buffer nobody reads any more. Such
+// a straggler must still be counted as dropped ("offered => written or
+// dropped"). The test sends into the buffer directly, as that Offer would.
+func TestQueue_OfferThatRacesCloseIsCountedDropped(t *testing.T) {
+	q := New(context.Background(), Config{Sink: &recSink{}, Queue: 4, Batch: 4, Interval: time.Hour})
+	closeQ(t, q)
+	q.ch <- model.Metric{CallID: "straggler"}
+	if got := q.Stats().Dropped; got != 1 {
+		t.Fatalf("Dropped = %d, want 1 for a metric that reached the buffer after the writer ended", got)
+	}
+}

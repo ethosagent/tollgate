@@ -91,9 +91,18 @@ func (q *Queue) Offer(m model.Metric) {
 }
 
 // Stats returns the current counters.
+// Once the writer has ended, whatever is still buffered (an Offer that raced
+// Close) will never be written, so it is counted as dropped here, at read
+// time: a straggler that lands later is still counted.
 func (q *Queue) Stats() Stats {
-	return Stats{Depth: len(q.ch), Dropped: q.dropped.Load(), SinkErrors: q.sinkErrors.Load(),
+	st := Stats{Depth: len(q.ch), Dropped: q.dropped.Load(), SinkErrors: q.sinkErrors.Load(),
 		Written: q.written.Load(), Ready: q.ready()}
+	select {
+	case <-q.done:
+		st.Dropped += int64(st.Depth)
+	default:
+	}
+	return st
 }
 
 func (q *Queue) ready() bool {
@@ -123,9 +132,8 @@ func (q *Queue) Close(ctx context.Context) error {
 
 func (q *Queue) run(ctx context.Context) {
 	defer func() {
-		q.dropped.Add(int64(len(q.ch))) // an offer that raced Close
 		q.giveUp()
-		close(q.done)
+		close(q.done) // from here on Stats counts what is left in ch as dropped
 	}()
 	tick := time.NewTicker(q.cfg.Interval)
 	defer tick.Stop()
