@@ -49,13 +49,13 @@ func TestMapBody_MatchesStreamedEquivalent(t *testing.T) {
 		body   func(t *testing.T) []byte
 	}{
 		{"openai text", model.WireOpenAIChat, "openai/chat-stream-text",
-			func(t *testing.T) []byte { return readFixture(t, "openai/chat") }},
+			func(t *testing.T) []byte { return fixture(t, "openai/chat") }},
 		{"openai tools", model.WireOpenAIChat, "openai/chat-stream-tools",
 			func(*testing.T) []byte { return []byte(openaiToolBody) }},
 		{"openai reasoning", model.WireOpenAIChat, "openai/chat-stream-reasoning",
 			func(*testing.T) []byte { return []byte(openaiReasonBody) }},
 		{"anthropic text", model.WireAnthropicMessages, "anthropic/messages-stream-text",
-			func(t *testing.T) []byte { return readFixture(t, "anthropic/messages") }},
+			func(t *testing.T) []byte { return fixture(t, "anthropic/messages") }},
 		{"anthropic tools", model.WireAnthropicMessages, "anthropic/messages-stream-tool-use",
 			func(*testing.T) []byte { return []byte(anthropicToolBody) }},
 		{"anthropic thinking", model.WireAnthropicMessages, "anthropic/messages-stream-thinking",

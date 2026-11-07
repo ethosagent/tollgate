@@ -1,10 +1,7 @@
 package normalise
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/ethosagent/tollgate/internal/model"
@@ -26,25 +23,11 @@ type anReqBlock struct {
 type anContent []anReqBlock
 
 func (c *anContent) UnmarshalJSON(b []byte) error {
-	b = bytes.TrimSpace(b)
-	switch {
-	case string(b) == "null":
-		return nil
-	case len(b) > 0 && b[0] == '"':
-		var s string
-		if err := json.Unmarshal(b, &s); err != nil {
-			return err
-		}
-		*c = anContent{{Type: "text", Text: s}}
-	case len(b) > 0 && b[0] == '[':
-		var blocks []anReqBlock
-		if err := json.Unmarshal(b, &blocks); err != nil {
-			return err
-		}
-		*c = blocks
-	default:
-		return errors.New("content must be a string, array or null")
+	blocks, err := decodeContent(b, func(s string) anReqBlock { return anReqBlock{Type: "text", Text: s} })
+	if err != nil {
+		return err
 	}
+	*c = blocks
 	return nil
 }
 
@@ -76,8 +59,8 @@ type anRequest struct {
 // become RoleTool messages placed before the rest of their user turn.
 func (w anthropicWire) ParseRequest(body []byte, c *model.Call) error {
 	var r anRequest
-	if err := w.decode(body, &r); err != nil {
-		return fmt.Errorf("anthropic request: %w", err)
+	if err := strictDecode(body, &r); err != nil {
+		return wrapRequestErr("anthropic request", err)
 	}
 	c.Model, c.Stream = r.Model, r.Stream
 	c.Messages = make([]model.Message, 0, len(r.Messages)+1)
@@ -91,8 +74,12 @@ func (w anthropicWire) ParseRequest(body []byte, c *model.Call) error {
 }
 
 func appendAnthropicMessage(out []model.Message, role string, blocks anContent) []model.Message {
+	if len(blocks) == 1 && blocks[0].Type == "text" {
+		return append(out, model.Message{Role: model.Role(role), Text: blocks[0].Text})
+	}
 	msg := model.Message{Role: model.Role(role)}
 	var text, reasoning strings.Builder
+	sawToolResult := false
 	for _, b := range blocks {
 		switch b.Type {
 		case "text":
@@ -102,21 +89,13 @@ func appendAnthropicMessage(out []model.Message, role string, blocks anContent) 
 		case "tool_use":
 			msg.ToolCalls = append(msg.ToolCalls, model.ToolCall{ID: b.ID, Name: b.Name, Arguments: b.Input})
 		case "tool_result":
+			sawToolResult = true
 			out = append(out, model.Message{Role: model.RoleTool, Text: b.Content.text(), ToolCallID: b.ToolUseID})
 		}
 	}
 	msg.Text, msg.Reasoning = text.String(), reasoning.String()
-	if msg.Text == "" && msg.Reasoning == "" && len(msg.ToolCalls) == 0 && len(blocks) > 0 && hasToolResult(blocks) {
+	if sawToolResult && msg.Text == "" && msg.Reasoning == "" && len(msg.ToolCalls) == 0 {
 		return out
 	}
 	return append(out, msg)
-}
-
-func hasToolResult(blocks anContent) bool {
-	for _, b := range blocks {
-		if b.Type == "tool_result" {
-			return true
-		}
-	}
-	return false
 }

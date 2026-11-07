@@ -7,7 +7,7 @@ import (
 )
 
 // openAIWire normalises OpenAI chat.completions (and compatible) traffic.
-type openAIWire struct{ decode decodeFunc }
+type openAIWire struct{}
 
 type oaToolCall struct {
 	Index    int    `json:"index"`
@@ -25,12 +25,6 @@ type oaDelta struct {
 	ToolCalls        []oaToolCall `json:"tool_calls"`
 }
 
-type oaChoice struct {
-	Delta        oaDelta `json:"delta"`
-	Message      oaDelta `json:"message"`
-	FinishReason string  `json:"finish_reason"`
-}
-
 type oaUsage struct {
 	PromptTokens        int64 `json:"prompt_tokens"`
 	CompletionTokens    int64 `json:"completion_tokens"`
@@ -42,12 +36,28 @@ type oaUsage struct {
 	} `json:"completion_tokens_details"`
 }
 
-type oaResponse struct {
-	Choices []oaChoice `json:"choices"`
-	Usage   *oaUsage   `json:"usage"`
-	Error   *struct {
-		Message string `json:"message"`
-	} `json:"error"`
+type oaError struct {
+	Message string `json:"message"`
+}
+
+// oaChunk is one chat.completion.chunk (choices carry a delta).
+type oaChunk struct {
+	Choices []struct {
+		Delta        oaDelta `json:"delta"`
+		FinishReason string  `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *oaUsage `json:"usage"`
+	Error *oaError `json:"error"`
+}
+
+// oaBody is a complete chat.completion (choices carry a message).
+type oaBody struct {
+	Choices []struct {
+		Message      oaDelta `json:"message"`
+		FinishReason string  `json:"finish_reason"`
+	} `json:"choices"`
+	Usage *oaUsage `json:"usage"`
+	Error *oaError `json:"error"`
 }
 
 func (u *oaUsage) toModel() model.Usage {
@@ -59,68 +69,86 @@ func (u *oaUsage) toModel() model.Usage {
 	}
 }
 
-// NewEventMapper returns the (stateless) chat.completions chunk mapper.
-func (w openAIWire) NewEventMapper() EventMapper { return openAIMapper(w) }
+// NewEventMapper returns a chunk mapper; it reuses one decode target per frame.
+func (w openAIWire) NewEventMapper() EventMapper { return &openAIMapper{} }
 
-type openAIMapper struct{ decode decodeFunc }
+type openAIMapper struct {
+	chunk oaChunk
+	tools toolOrdinals
+	state streamState
+}
 
 // Frame maps one chat.completion.chunk frame; "[DONE]" and blank data yield nothing.
-func (m openAIMapper) Frame(_ string, data []byte) ([]model.Event, error) {
+func (m *openAIMapper) Frame(_ string, data []byte) ([]model.Event, error) {
 	if len(data) == 0 || string(data) == "[DONE]" {
 		return nil, nil
 	}
-	var r oaResponse
-	if err := m.decode(data, &r); err != nil {
+	choices := m.chunk.Choices
+	clear(choices[:cap(choices)])
+	m.chunk = oaChunk{Choices: choices[:0]}
+	if err := strictDecode(data, &m.chunk); err != nil {
 		return nil, err
 	}
-	return r.events(false), nil
+	out := make([]model.Event, 0, 2)
+	if m.chunk.Error != nil {
+		out = append(out, errorEvent(m.chunk.Error.Message))
+	}
+	for i := range m.chunk.Choices {
+		c := &m.chunk.Choices[i]
+		out = c.Delta.appendEvents(out, &m.tools)
+		if c.FinishReason != "" {
+			out = append(out, finishEv(c.FinishReason))
+		}
+	}
+	if m.chunk.Usage != nil {
+		out = append(out, usageEvent(m.chunk.Usage.toModel()))
+	}
+	return m.state.observe(out), nil
 }
 
-// MapBody maps a complete chat.completion body.
+// Finish reports a stream that ended without a finish reason.
+func (m *openAIMapper) Finish() []model.Event { return m.state.end() }
+
+// MapBody maps a complete chat.completion body. Bodies carry no tool-call
+// index, so tool calls are keyed by their position in the message.
 func (w openAIWire) MapBody(body []byte) ([]model.Event, error) {
-	var r oaResponse
-	if err := w.decode(body, &r); err != nil {
+	var r oaBody
+	if err := strictDecode(body, &r); err != nil {
 		return nil, err
 	}
-	return r.events(true), nil
-}
-
-// events flattens a chunk (whole=false, uses delta) or a complete body
-// (whole=true, uses message and numbers tool calls by position).
-func (r *oaResponse) events(whole bool) []model.Event {
 	var out []model.Event
 	if r.Error != nil {
 		out = append(out, errorEvent(r.Error.Message))
 	}
-	for _, c := range r.Choices {
-		d := c.Delta
-		if whole {
-			d = c.Message
+	var tools toolOrdinals
+	for i := range r.Choices {
+		c := &r.Choices[i]
+		for j := range c.Message.ToolCalls {
+			c.Message.ToolCalls[j].Index = j
 		}
-		out = d.appendEvents(out, whole)
+		out = c.Message.appendEvents(out, &tools)
 		if c.FinishReason != "" {
-			out = append(out, model.Event{Kind: model.EventFinish, FinishReason: c.FinishReason})
+			out = append(out, finishEv(c.FinishReason))
 		}
 	}
 	if r.Usage != nil {
 		out = append(out, usageEvent(r.Usage.toModel()))
 	}
-	return out
+	return out, nil
 }
 
-func (d oaDelta) appendEvents(out []model.Event, positional bool) []model.Event {
+// appendEvents flattens a delta or message. Tool-call indexes go through
+// tools, so they are dense 0-based ordinals whatever the upstream numbering.
+func (d *oaDelta) appendEvents(out []model.Event, tools *toolOrdinals) []model.Event {
 	if d.ReasoningContent != "" {
-		out = append(out, model.Event{Kind: model.EventReasoningDelta, Text: d.ReasoningContent})
+		out = append(out, reasoningEv(d.ReasoningContent))
 	}
 	if d.Content != "" {
-		out = append(out, model.Event{Kind: model.EventTextDelta, Text: d.Content})
+		out = append(out, textEv(d.Content))
 	}
-	for i, tc := range d.ToolCalls {
-		if positional {
-			tc.Index = i
-		}
-		out = append(out, model.Event{Kind: model.EventToolCallDelta, ToolCall: &model.ToolCallDelta{
-			Index: tc.Index, ID: tc.ID, Name: tc.Function.Name, Arguments: tc.Function.Arguments}})
+	for i := range d.ToolCalls {
+		tc := &d.ToolCalls[i]
+		out = append(out, toolEv(tools.assign(tc.Index), tc.ID, tc.Function.Name, tc.Function.Arguments))
 	}
 	return out
 }

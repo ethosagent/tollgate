@@ -17,6 +17,9 @@ const (
 
 // ToolCallDelta is an incremental piece of a streamed tool call.
 type ToolCallDelta struct {
+	// Index is a dense, 0-based ordinal of the tool call within one response,
+	// in order of first appearance, identical on every wire. It is not the
+	// provider's own index (OpenAI tool_calls index, Anthropic block index).
 	Index     int
 	ID        string
 	Name      string

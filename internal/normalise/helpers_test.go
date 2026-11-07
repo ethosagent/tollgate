@@ -3,66 +3,68 @@ package normalise
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
-	"sort"
+	"path"
 	"strings"
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/model"
+	"github.com/ethosagent/tollgate/testkit"
 )
 
-const fixtureDir = "../../testkit/testdata"
-
-// readFixture loads a testkit fixture by name ("openai/chat-stream-text").
-func readFixture(t testing.TB, name string) []byte {
+// fixture loads a testkit fixture by name ("openai/chat-stream-text").
+func fixture(t testing.TB, name string) []byte {
 	t.Helper()
-	for _, ext := range []string{".sse", ".json"} {
-		if b, err := os.ReadFile(filepath.Join(fixtureDir, name+ext)); err == nil {
-			return b
-		}
+	b, err := testkit.Fixture(name)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Fatalf("fixture %q not found", name)
-	return nil
+	return b
 }
 
 // responseFixtures lists every upstream response fixture (not requests, not
 // error bodies), so a new recording needs a golden file.
-func responseFixtures(t testing.TB) []string {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(fixtureDir, "*", "*"))
-	if err != nil {
-		t.Fatal(err)
-	}
+func responseFixtures() []string {
 	var names []string
-	for _, f := range files {
-		base := filepath.Base(f)
-		if strings.HasPrefix(base, "request-") || strings.HasPrefix(base, "error-") {
-			continue
+	for _, n := range testkit.FixtureNames() {
+		base := path.Base(n)
+		if !strings.HasPrefix(base, "request-") && !strings.HasPrefix(base, "error-") {
+			names = append(names, n)
 		}
-		rel, _ := filepath.Rel(fixtureDir, f)
-		names = append(names, strings.TrimSuffix(filepath.ToSlash(rel), filepath.Ext(f)))
 	}
-	sort.Strings(names)
+	return names
+}
+
+// requestFixtures lists every request-body fixture.
+func requestFixtures() []string {
+	var names []string
+	for _, n := range testkit.FixtureNames() {
+		if strings.HasPrefix(path.Base(n), "request-") {
+			names = append(names, n)
+		}
+	}
 	return names
 }
 
 func wireOf(name string) model.WireFormat {
-	if strings.HasPrefix(name, "anthropic/") {
+	if testkit.PathFor(name) == "/v1/messages" {
 		return model.WireAnthropicMessages
 	}
 	return model.WireOpenAIChat
 }
 
-// sseFrames splits an SSE stream into blank-line separated frames.
-func sseFrames(b []byte) [][]byte {
-	var out [][]byte
-	for _, f := range bytes.Split(b, []byte("\n\n")) {
-		if len(bytes.TrimSpace(f)) > 0 {
-			out = append(out, f)
+// feed maps SSE frames through m and returns all events.
+func feed(t testing.TB, m EventMapper, frames [][]byte) []model.Event {
+	t.Helper()
+	var all []model.Event
+	for _, f := range frames {
+		ev, data := SplitFrame(f)
+		evs, err := m.Frame(ev, data)
+		if err != nil {
+			t.Fatalf("Frame: %v", err)
 		}
+		all = append(all, evs...)
 	}
-	return out
+	return all
 }
 
 // eventsOf maps a response fixture to events: SSE through the stateful
@@ -73,7 +75,7 @@ func eventsOf(t testing.TB, name string) []model.Event {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := readFixture(t, name)
+	raw := fixture(t, name)
 	if bytes.HasPrefix(bytes.TrimSpace(raw), []byte("{")) {
 		evs, err := w.MapBody(raw)
 		if err != nil {
@@ -81,17 +83,7 @@ func eventsOf(t testing.TB, name string) []model.Event {
 		}
 		return evs
 	}
-	m := w.NewEventMapper()
-	var all []model.Event
-	for _, f := range sseFrames(raw) {
-		ev, data := SplitFrame(f)
-		evs, err := m.Frame(ev, data)
-		if err != nil {
-			t.Fatalf("Frame(%s): %v", name, err)
-		}
-		all = append(all, evs...)
-	}
-	return all
+	return feed(t, w.NewEventMapper(), testkit.Chunks(name))
 }
 
 // folded is the final state a consumer would derive from an event sequence.

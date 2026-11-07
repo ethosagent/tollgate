@@ -83,7 +83,7 @@ func TestNormalise_FixturesMatchGolden(t *testing.T) {
 	if err := checkUpdateAllowed(*update, os.Getenv("CI")); err != nil {
 		t.Fatal(err)
 	}
-	names := responseFixtures(t)
+	names := responseFixtures()
 	if len(names) < 8 {
 		t.Fatalf("expected at least 8 response fixtures, found %v", names)
 	}
@@ -144,9 +144,9 @@ func TestSplitFrame(t *testing.T) {
 }
 
 func fuzzSeeds(f *testing.F, prefix string) {
-	for _, name := range responseFixtures(f) {
+	for _, name := range responseFixtures() {
 		if len(name) > len(prefix) && name[:len(prefix)] == prefix {
-			f.Add(readFixture(f, name))
+			f.Add(fixture(f, name))
 		}
 	}
 	f.Add([]byte("data: {"))
@@ -162,7 +162,7 @@ func runFuzz(f *testing.F, wire model.WireFormat, prefix string) {
 	}
 	f.Fuzz(func(_ *testing.T, in []byte) {
 		m := w.NewEventMapper()
-		for _, fr := range sseFrames(in) {
+		for _, fr := range bytes.Split(in, []byte("\n\n")) {
 			ev, data := SplitFrame(fr)
 			_, _ = m.Frame(ev, data) // errors are fine, panics are not
 		}

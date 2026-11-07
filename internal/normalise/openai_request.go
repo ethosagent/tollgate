@@ -1,46 +1,39 @@
 package normalise
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
+// oaPart is one typed part of array content.
+type oaPart struct {
+	Type string `json:"type"`
+	Text string `json:"text"`
+}
+
 // oaContent is a message content: a string, an array of typed parts, or null.
-type oaContent string
+type oaContent []oaPart
 
 func (c *oaContent) UnmarshalJSON(b []byte) error {
-	b = bytes.TrimSpace(b)
-	switch {
-	case string(b) == "null":
-		return nil
-	case len(b) > 0 && b[0] == '"':
-		var s string
-		if err := json.Unmarshal(b, &s); err != nil {
-			return err
-		}
-		*c = oaContent(s)
-	case len(b) > 0 && b[0] == '[':
-		var parts []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		}
-		if err := json.Unmarshal(b, &parts); err != nil {
-			return err
-		}
-		var sb strings.Builder
-		for _, p := range parts {
-			sb.WriteString(p.Text)
-		}
-		*c = oaContent(sb.String())
-	default:
-		return errors.New("message content must be a string, array or null")
+	parts, err := decodeContent(b, func(s string) oaPart { return oaPart{Type: "text", Text: s} })
+	if err != nil {
+		return err
 	}
+	*c = parts
 	return nil
+}
+
+// text joins the text of every part.
+func (c oaContent) text() string {
+	if len(c) == 1 {
+		return c[0].Text
+	}
+	var sb strings.Builder
+	for _, p := range c {
+		sb.WriteString(p.Text)
+	}
+	return sb.String()
 }
 
 type oaRequest struct {
@@ -58,13 +51,13 @@ type oaRequest struct {
 // ParseRequest fills Model, Stream and Messages from a chat.completions body.
 func (w openAIWire) ParseRequest(body []byte, c *model.Call) error {
 	var r oaRequest
-	if err := w.decode(body, &r); err != nil {
-		return fmt.Errorf("openai request: %w", err)
+	if err := strictDecode(body, &r); err != nil {
+		return wrapRequestErr("openai request", err)
 	}
 	c.Model, c.Stream = r.Model, r.Stream
 	c.Messages = make([]model.Message, 0, len(r.Messages))
 	for _, m := range r.Messages {
-		msg := model.Message{Role: openAIRole(m.Role), Text: string(m.Content),
+		msg := model.Message{Role: openAIRole(m.Role), Text: m.Content.text(),
 			Reasoning: m.ReasoningContent, ToolCallID: m.ToolCallID}
 		for _, tc := range m.ToolCalls {
 			msg.ToolCalls = append(msg.ToolCalls, model.ToolCall{
