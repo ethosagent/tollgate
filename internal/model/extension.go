@@ -64,11 +64,18 @@ const (
 	DecisionReplace                       // send Response instead
 )
 
-// Decision is a Finalizer's verdict.
+// Decision is a Finalizer's verdict. A Recover without a Body, or a Replace
+// without a Response body, counts as a Release.
 type Decision struct {
-	Action   DecisionAction
-	Body     []byte    // DecisionRecover: the new upstream request body
-	Response *Response // DecisionReplace
+	Action DecisionAction
+	// Body is the request body of the recovery call (DecisionRecover). The call
+	// goes to the same upstream with the same headers and credentials.
+	Body []byte
+	// Response (DecisionReplace): its Body is written verbatim to the client in
+	// place of the held terminal events, so it must be whole SSE frames in the
+	// call's wire format. The stream has started, so Status and Header are
+	// ignored.
+	Response *Response
 }
 
 // StreamSummary is what a Finalizer sees before the terminal event.
@@ -81,7 +88,10 @@ type StreamSummary struct {
 
 // Finalizer holds the terminal event of a stream and decides whether to
 // release it, recover with a new upstream call, or replace the response.
-// Bounded by a per-finalizer budget and a global ceiling per call.
+// It only sees streamed (SSE) responses; stream:false is never held. Bounded by
+// a per-finalizer budget and a global ceiling per call (Limits.FinalizerBudget,
+// Limits.RecoveryCeiling, in recovery calls), and by Limits.HookChainDeadline
+// per Decide; a panic, a missed deadline or an exceeded budget counts as Release.
 type Finalizer interface {
 	Name() string
 	Decide(ctx context.Context, c *Call, s StreamSummary) Decision

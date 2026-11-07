@@ -40,6 +40,7 @@ func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 	switch {
 	case wire == nil: // not parsed, or a pass-through wire: Before and After only
 	case o.call.Stream:
+		req.Final = p.finalize(o, wire)
 		if o.chn.Has(chain.StageEvent) || p.wantsUsage(o.chn) {
 			req.Frames = forward.NewFrameQueue(p.opts.Limits.EventBuffer)
 			o.tap = o.chn.StartTap(context.WithoutCancel(r.Context()), o.call, req.Frames, wire.NewEventMapper())
@@ -80,7 +81,7 @@ func (p *Proxy) copiedUsage(o *outcome, wire normalise.Wire, cp *forward.BodyCop
 func (p *Proxy) parseCall(ctx context.Context, o *outcome) (wire normalise.Wire, hooked bool) {
 	c := o.chn
 	if !c.Has(chain.StageBefore) && !c.Has(chain.StageEvent) && !c.Has(chain.StageResponse) &&
-		!c.Has(chain.StageSessionClosed) && !p.wantsUsage(c) {
+		!c.Has(chain.StageSessionClosed) && !p.wantsUsage(c) && p.fin.Empty() {
 		return nil, false // the zero-hook fast path
 	}
 	wire, hooked = p.parseBody(ctx, o)

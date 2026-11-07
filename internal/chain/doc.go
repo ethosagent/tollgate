@@ -7,6 +7,8 @@
 // (metadata only) and skipped. OnEvent hooks consume a bounded channel off the
 // client path; overflow drops and counts, it never blocks the stream.
 // Within/WithinLate also bound the Auth, Admission and resolver seams.
+// Finalizers (finalize.go) are asked in order under the same guard, with
+// per-finalizer and per-call recovery budgets (a Barrier per call).
 //
 // Dependency law (internal/archtest, rule D3): standard library and other
 // internal packages only.

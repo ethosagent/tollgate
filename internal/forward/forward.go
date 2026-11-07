@@ -60,6 +60,10 @@ type Request struct {
 	// client has been sent the bytes. Forward closes it when the call ends
 	// and records the ending in Frames.End.
 	Frames *FrameQueue
+	// Final, if not nil, holds the terminal event of an SSE response until
+	// its Decide has run (final.go). Nil means the terminal event is relayed
+	// like any other frame, with no added work.
+	Final *Finalize
 }
 
 // Result is how a forwarded call ended.
@@ -87,13 +91,9 @@ func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, r
 	defer clock.stop()
 	// req.Target passed Target, the one check every upstream URL goes
 	// through, so the caller cannot steer this request (ADR 0007).
-	out, err := http.NewRequestWithContext(ctx, req.Method, req.Target.String(), bytes.NewReader(req.Body))
+	out, err := newUpstreamRequest(ctx, req, req.Body)
 	if err != nil {
 		return Result{Finish: model.FinishUpstreamError}, ErrUpstreamUnreachable
-	}
-	out.Header = req.Header
-	if out.Header == nil {
-		out.Header = http.Header{} // a RoundTripper rejects a nil header
 	}
 	resp, err := rt.RoundTrip(out)
 	if err != nil {
@@ -108,7 +108,21 @@ func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, r
 	if clock != nil {
 		src = &touchReader{resp.Body, clock}
 	}
-	return relayResponse(ctx, w, resp, src, req)
+	return relayResponse(ctx, w, resp, src, req, relayEnv{rt: rt, clock: clock})
+}
+
+// newUpstreamRequest builds the upstream request for body from req's target
+// and headers.
+func newUpstreamRequest(ctx context.Context, req Request, body []byte) (*http.Request, error) {
+	out, err := http.NewRequestWithContext(ctx, req.Method, req.Target.String(), bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	out.Header = req.Header
+	if out.Header == nil {
+		out.Header = http.Header{} // a RoundTripper rejects a nil header
+	}
+	return out, nil
 }
 
 // failedBeforeBody classifies an error that happened before any byte went to
@@ -126,21 +140,33 @@ func failedBeforeBody(ctx context.Context, err error) (Result, error) {
 
 var responseHeaders = NewHeaderFilter()
 
-func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, src io.Reader, req Request) (Result, error) {
+// relayEnv is what a relay needs beyond the response: the transport and the
+// idle clock, for a Finalizer's recovery call.
+type relayEnv struct {
+	rt    http.RoundTripper
+	clock *idleClock
+}
+
+func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, src io.Reader, req Request, env relayEnv) (Result, error) {
 	res := Result{Status: resp.StatusCode, Finish: model.FinishOK}
 	if resp.StatusCode >= http.StatusBadRequest {
 		res.Finish = model.FinishUpstreamError
 	}
-	sent := false
-	begin := func() {
-		sent = true
-		responseHeaders.CopyTo(w.Header(), resp.Header)
-		w.WriteHeader(resp.StatusCode)
+	var sent bool
+	var err error
+	if req.Final != nil && finalizable(resp) {
+		sent, err = relayFinal(ctx, w, resp, src, req, env)
+	} else {
+		// begin stays on the stack: nothing here may let it escape (STR-6).
+		begin := func() {
+			sent = true
+			startResponse(w, resp)
+		}
+		_, err = Tee(w, src, req.Frames, begin)
 	}
-	_, err := Tee(w, src, req.Frames, begin)
 	switch {
 	case err == nil && !sent: // an empty body still carries a status and headers
-		begin()
+		startResponse(w, resp)
 	case err != nil && !sent:
 		return failedBeforeBody(ctx, err)
 	case err != nil:
@@ -152,6 +178,12 @@ func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Respon
 	return res, nil
 }
 
+// startResponse sends the status line and the filtered upstream headers.
+func startResponse(w http.ResponseWriter, resp *http.Response) {
+	responseHeaders.CopyTo(w.Header(), resp.Header)
+	w.WriteHeader(resp.StatusCode)
+}
+
 // terminate ends a response that broke after its first byte. An event
 // stream gets a provider-shaped error event (status from
 // normalise.FinishStatus, fixed message) and a clean end; terminate then
@@ -160,13 +192,19 @@ func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Respon
 // response from its media type: the wire alone cannot tell, because a
 // streaming wire still answers errors and stream:false calls with JSON.
 func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape, f model.Finish) bool {
-	if mt, _, err := mime.ParseMediaType(h.Get("Content-Type")); err != nil || mt != "text/event-stream" {
+	if !isEventStream(h) {
 		return false
 	}
 	status := normalise.FinishStatus(f)
 	ev := normalise.AppendErrorEvent(nil, shape, status, normalise.StatusMessage(status))
 	_, _ = writeFlush(w, http.NewResponseController(w), ev) // the client may be gone; the call is ending anyway
 	return true
+}
+
+// isEventStream reports whether h describes an SSE body.
+func isEventStream(h http.Header) bool {
+	mt, _, err := mime.ParseMediaType(h.Get("Content-Type"))
+	return err == nil && mt == "text/event-stream"
 }
 
 // finishFor classifies a failed round trip or relay. ctx is the call's

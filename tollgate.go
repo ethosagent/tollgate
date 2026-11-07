@@ -27,6 +27,10 @@ type Proxy struct {
 	useMu sync.Mutex                  // serialises Use; readers never lock
 	chain atomic.Pointer[chain.Chain] // the hooks a new call runs: one atomic load per call
 
+	// fin holds Options.Finalizers under their Limits; empty means no
+	// terminal event is ever held (finalize.go).
+	fin *chain.Finalizers
+
 	// metricOut receives every call's Metric once After has run (record.go).
 	// admin.go sets it (to offer) only when a sink is configured or the admin
 	// handler is used; while it is nil and no hook needs it, a call skips
@@ -67,6 +71,7 @@ func New(opts Options) (*Proxy, error) {
 		reqHeaders: forward.NewHeaderFilter(append([]string{h.TenantKey, h.Session, h.UpstreamURL}, opts.consumedHeaders()...)...),
 		idPrefix:   rand.Text()[:12] + "-",
 	}
+	p.fin = newFinalizers(opts)
 	p.chain.Store(chain.New(nil, opts.Logger, chain.Limits{Hook: opts.Limits.HookBeforeDeadline, Total: opts.Limits.HookChainDeadline}))
 	p.initSessions()
 	p.handler = p.buildHandler()
