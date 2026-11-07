@@ -13,11 +13,12 @@ import (
 	"github.com/ethosagent/tollgate/internal/forward"
 	"github.com/ethosagent/tollgate/internal/model"
 	"github.com/ethosagent/tollgate/internal/normalise"
+	"github.com/ethosagent/tollgate/internal/session"
 )
 
 // serveProxy runs the pipeline: Auth, Admission, ProviderResolver, target
-// check, body cap, then the call (hooks.go). Sessions are added by a later
-// milestone (ARCHITECTURE.md section 4). Every extension call runs under
+// check, body cap, then the call (hooks.go), which attributes the session
+// once the request is parsed (sessions.go). Every extension call runs under
 // chain.Within (recover plus a Limits deadline); extension errors map to a
 // status through model.StatusOf (ADR 0008). Every call, whatever its path,
 // ends in finishCall, which emits its one Metric.
@@ -48,6 +49,9 @@ func (p *Proxy) prepare(r *http.Request, o *outcome) (req forward.Request, relea
 	}
 	o.tenant = tenant.ID
 	call.Tenant, call.Header, call.Meta = tenant, p.reqHeaders.Filter(r.Header), map[string]any{}
+	if id := strings.TrimSpace(r.Header.Get(p.opts.Headers.Session)); id != "" {
+		call.Meta[session.HeaderMeta] = id // the header itself is stripped; the strategy reads it here
+	}
 	release, err = chain.WithinLate(r.Context(), l.AdmissionDeadline, func(ctx context.Context) (func(), error) {
 		return p.opts.Admission.Acquire(ctx, tenant, call)
 	}, releaseLate)

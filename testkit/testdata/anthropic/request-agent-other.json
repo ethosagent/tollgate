@@ -1,0 +1,1 @@
+{"model":"claude-sonnet-5-5","max_tokens":1024,"system":"You are a coding agent. Use the tools to fix the failing test.","messages":[{"role":"user","content":"Summarise the README."}]}

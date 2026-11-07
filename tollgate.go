@@ -42,7 +42,8 @@ type Proxy struct {
 	adminH    http.Handler
 	inflight  atomic.Int64 // calls inside serveProxy
 
-	stats hookStats
+	stats    hookStats
+	sessions sessionState
 }
 
 // New validates opts, applies defaults and returns a Proxy.
@@ -67,6 +68,7 @@ func New(opts Options) (*Proxy, error) {
 		idPrefix:   rand.Text()[:12] + "-",
 	}
 	p.chain.Store(chain.New(nil, opts.Logger, chain.Limits{Hook: opts.Limits.HookBeforeDeadline, Total: opts.Limits.HookChainDeadline}))
+	p.initSessions()
 	p.handler = p.buildHandler()
 	p.initMetrics()
 	return p, nil
@@ -80,6 +82,9 @@ func (p *Proxy) Use(hooks ...Hook) {
 	p.useMu.Lock()
 	defer p.useMu.Unlock()
 	p.chain.Store(p.chain.Load().With(hooks...))
+	if p.chain.Load().Has(chain.StageSessionClosed) {
+		p.startSessionConsumer()
+	}
 }
 
 // Handler returns the HTTP handler: health endpoints plus the proxy.

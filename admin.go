@@ -2,6 +2,7 @@ package tollgate
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/ethosagent/tollgate/internal/metrics"
@@ -62,20 +63,22 @@ func (p *Proxy) offer(ctx context.Context, m Metric) {
 	}
 }
 
-// Close flushes the metric queue to the sink and stops its goroutine. Call it
+// Close stops the session sweeper and the OnSessionClosed goroutine, flushes
+// the metric queue to the sink and stops its goroutine. Call it
 // after the HTTP server has shut down so every call's Metric is queued. If ctx
 // ends first, Close returns its error and whatever the sink has not accepted
 // is lost (and counted as dropped). Without a sink it does nothing. It is
 // safe to call more than once; calls handled afterwards drop their metrics.
 func (p *Proxy) Close(ctx context.Context) error {
+	sessErr := p.closeSessions(ctx)
 	p.qmu.Lock()
 	p.qclosed = true
 	q := p.queue.Load()
 	p.qmu.Unlock()
 	if q == nil {
-		return nil
+		return sessErr
 	}
-	return q.Close(ctx)
+	return errors.Join(sessErr, q.Close(ctx))
 }
 
 // serveReadyz answers 503 while the metric sink is failing (ARCHITECTURE.md
@@ -134,7 +137,9 @@ func (p *Proxy) serveMetrics(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (p *Proxy) serveStatusz(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, statuszOf(p.report()))
+	d := statuszOf(p.report())
+	d.Sessions = p.sessionStatus()
+	writeJSON(w, http.StatusOK, d)
 }
 
 type statuszProvider struct {
@@ -160,6 +165,8 @@ type statuszDoc struct {
 		UnbufferedResponses int64 `json:"unbuffered_responses"`
 		DroppedEvents       int64 `json:"dropped_events"`
 	} `json:"hooks"`
+	// Sessions is absent when the host supplied its own SessionStrategy.
+	Sessions *statuszSessions `json:"sessions,omitempty"`
 }
 
 func statuszOf(r metrics.Report) statuszDoc {

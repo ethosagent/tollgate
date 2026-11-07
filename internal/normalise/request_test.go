@@ -1,6 +1,7 @@
 package normalise
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -36,6 +37,15 @@ func TestParseRequest_Fixtures(t *testing.T) {
 			[]model.Message{sys, {Role: model.RoleUser, Text: "Say hello."}}},
 		{"anthropic/request-messages-tools", "claude-sonnet-5-5", true,
 			[]model.Message{sys, {Role: model.RoleUser, Text: "What is the weather in Paris?"}}},
+		{"anthropic/request-agent-other", "claude-sonnet-5-5", false, agentMessages(0, "Summarise the README.")},
+	}
+	for step := 1; step <= 6; step++ {
+		tests = append(tests, struct {
+			fixture string
+			model   string
+			stream  bool
+			want    []model.Message
+		}{fmt.Sprintf("anthropic/request-agent-step-%d", step), "claude-sonnet-5-5", false, agentMessages(step-1, agentTask)})
 	}
 	covered := map[string]bool{}
 	for _, tc := range tests {

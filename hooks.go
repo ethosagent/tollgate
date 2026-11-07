@@ -79,9 +79,17 @@ func (p *Proxy) copiedUsage(o *outcome, wire normalise.Wire, cp *forward.BodyCop
 // parsed (nobody needs it, a pass-through wire, or a body that does not parse).
 func (p *Proxy) parseCall(ctx context.Context, o *outcome) (wire normalise.Wire, hooked bool) {
 	c := o.chn
-	if !c.Has(chain.StageBefore) && !c.Has(chain.StageEvent) && !c.Has(chain.StageResponse) && !p.wantsUsage(c) {
+	if !c.Has(chain.StageBefore) && !c.Has(chain.StageEvent) && !c.Has(chain.StageResponse) &&
+		!c.Has(chain.StageSessionClosed) && !p.wantsUsage(c) {
 		return nil, false // the zero-hook fast path
 	}
+	wire, hooked = p.parseBody(ctx, o)
+	p.attributeSession(ctx, o)
+	return wire, hooked
+}
+
+// parseBody parses the request body into the Call.
+func (p *Proxy) parseBody(ctx context.Context, o *outcome) (wire normalise.Wire, hooked bool) {
 	wire, err := normalise.ForWire(o.call.Provider.Wire)
 	if err != nil {
 		return nil, true
