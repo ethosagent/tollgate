@@ -2,22 +2,21 @@ package normalise
 
 import (
 	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/ethosagent/tollgate/internal/model"
 )
 
-func TestShapeForPath(t *testing.T) {
-	for path, want := range map[string]ErrorShape{
-		"/openai/v1/chat/completions": ShapeOpenAI,
-		"/anthropic/v1/messages":      ShapeAnthropic,
-		"/openai":                     ShapeOpenAI,
-		"/openrouter/v1/x":            ShapeGeneric,
-		"/":                           ShapeGeneric,
-		"":                            ShapeGeneric,
+func TestShapeForWire(t *testing.T) {
+	for wire, want := range map[model.WireFormat]ErrorShape{
+		model.WireOpenAIChat:        ShapeOpenAI,
+		model.WireAnthropicMessages: ShapeAnthropic,
+		model.WirePassthrough:       ShapeGeneric,
+		"":                          ShapeGeneric,
 	} {
-		if got := ShapeForPath(path); got != want {
-			t.Errorf("ShapeForPath(%q) = %v, want %v", path, got, want)
+		if got := ShapeForWire(wire); got != want {
+			t.Errorf("ShapeForWire(%q) = %v, want %v", wire, got, want)
 		}
 	}
 }
@@ -74,5 +73,4 @@ func TestWriteError_Shapes(t *testing.T) {
 			}
 		})
 	}
-	_ = http.StatusOK
 }

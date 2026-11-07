@@ -100,7 +100,7 @@ func TestProxy_AuthErrors(t *testing.T) {
 	}{
 		"plain error is 401":       {errors.New("bad key"), 401},
 		"forbidden error is 403":   {statusErr{403}, 403},
-		"other status stays 401":   {statusErr{500}, 401},
+		"non-error status is 401":  {statusErr{200}, 401},
 		"wrapped forbidden is 403": {errors.Join(errors.New("ctx"), statusErr{403}), 403},
 	} {
 		t.Run(name, func(t *testing.T) {

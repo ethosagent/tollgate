@@ -41,6 +41,8 @@ type (
 	Decision         = model.Decision
 	DecisionAction   = model.DecisionAction
 	StreamSummary    = model.StreamSummary
+	StatusError      = model.StatusError
+	RetryAfterError  = model.RetryAfterError
 )
 
 // Default implementations.

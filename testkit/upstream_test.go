@@ -112,6 +112,29 @@ func TestFakeUpstream_UnknownFixtureOrPathIs404(t *testing.T) {
 			t.Fatalf("%s %q: status = %d, want 404", tc.path, tc.fixture, resp.StatusCode)
 		}
 	}
+	got := f.Requests()
+	if len(got) != 2 {
+		t.Fatalf("recorded %d requests, want both unmatched ones", len(got))
+	}
+	for i, r := range got {
+		if r.Fixture != "" || r.Path == "" {
+			t.Errorf("request %d = %+v, want a recorded path and no fixture", i, r)
+		}
+	}
+}
+
+func TestPathFor(t *testing.T) {
+	for name, want := range map[string]string{
+		"anthropic/messages-stream-text": "/v1/messages",
+		"openai/chat":                    "/v1/chat/completions",
+	} {
+		if got := PathFor(name); got != want {
+			t.Errorf("PathFor(%q) = %q, want %q", name, got, want)
+		}
+		if got := defaultFixture(want, []byte(`{}`)); !strings.HasPrefix(got, strings.Split(name, "/")[0]+"/") {
+			t.Errorf("PathFor(%q) is not served by the same provider (%q)", name, got)
+		}
+	}
 }
 
 func TestFakeUpstream_StatusOverride(t *testing.T) {

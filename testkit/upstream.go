@@ -155,13 +155,13 @@ func defaultFixture(path string, body []byte) string {
 	}
 	_ = json.Unmarshal(body, &req) // a body that is not JSON counts as stream:false
 	switch {
-	case strings.HasSuffix(path, "/chat/completions") && req.Stream:
+	case strings.HasSuffix(path, openAIChatPath) && req.Stream:
 		return "openai/chat-stream-text"
-	case strings.HasSuffix(path, "/chat/completions"):
+	case strings.HasSuffix(path, openAIChatPath):
 		return "openai/chat"
-	case strings.HasSuffix(path, "/messages") && req.Stream:
+	case strings.HasSuffix(path, anthropicMessagesPath) && req.Stream:
 		return "anthropic/messages-stream-text"
-	case strings.HasSuffix(path, "/messages"):
+	case strings.HasSuffix(path, anthropicMessagesPath):
 		return "anthropic/messages"
 	}
 	return ""

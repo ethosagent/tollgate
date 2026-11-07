@@ -1,10 +1,12 @@
 package tollgate
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"github.com/ethosagent/tollgate/internal/forward"
 )
@@ -14,6 +16,10 @@ import (
 type Proxy struct {
 	opts    Options
 	handler http.Handler // built once in New
+
+	reqHeaders forward.HeaderFilter // strips hop-by-hop and tollgate's own headers
+	idPrefix   string               // random per Proxy; call IDs are idPrefix + counter
+	callSeq    atomic.Uint64
 
 	mu    sync.RWMutex
 	hooks []Hook
@@ -34,7 +40,12 @@ func New(opts Options) (*Proxy, error) {
 			IdleConnTimeout:     opts.Limits.IdleConnTimeout,
 		})
 	}
-	p := &Proxy{opts: opts}
+	h := opts.Headers
+	p := &Proxy{
+		opts:       opts,
+		reqHeaders: forward.NewHeaderFilter(h.TenantKey, h.Session, h.UpstreamURL),
+		idPrefix:   rand.Text()[:12] + "-",
+	}
 	p.handler = p.buildHandler()
 	return p, nil
 }

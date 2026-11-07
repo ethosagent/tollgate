@@ -1,6 +1,6 @@
 # 0006. Upstream override allowlist
 
-- **Status:** Accepted
+- **Status:** Superseded by 0007
 - **Date:** 2026-11-07
 - **Source:** plan 002, "x-upstream-url" open decision
 

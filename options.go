@@ -15,16 +15,18 @@ import (
 // Options configures a Proxy. The zero value is valid: every nil extension
 // gets its default and every zero limit gets the value from DefaultLimits.
 type Options struct {
-	// Auth resolves the tenant. An error becomes 401, or 403 when the error has
-	// an HTTPStatus() int method returning 403. Default: NoAuth{}.
+	// Auth resolves the tenant. An error becomes 401, or the error's own
+	// 4xx/5xx status when it is a StatusError (ADR 0008). Default: NoAuth{}.
 	Auth Authenticator
-	// Admission gates each call. An error becomes 429 with a Retry-After header
-	// (seconds, from a RetryAfter() time.Duration method on the error, else 1).
-	// Default: Unlimited{}.
+	// Admission gates each call. An error becomes 429 (or its StatusError
+	// status) with a Retry-After header in seconds: from a RetryAfterError,
+	// else 1. Default: Unlimited{}.
 	Admission Admission
-	// Providers picks the upstream. Any error becomes 404. Default: the
-	// path-prefix resolver (/openai, /anthropic, /openrouter) with the
-	// Policy.AllowedUpstreams override (ADR 0006).
+	// Providers picks the upstream. An error becomes 404 (or its StatusError
+	// status). Whatever it returns, the core applies the upstream-override
+	// header under Policy.AllowedUpstreams and checks the final target
+	// (ADR 0007). Default: the path-prefix resolver (/openai, /anthropic,
+	// /openrouter).
 	Providers  ProviderResolver
 	Sessions   SessionStrategy // default: header-or-predict (internal/session)
 	Metrics    MetricSink      // default: DiscardSink{}
@@ -115,7 +117,7 @@ func (o Options) withDefaults() Options {
 	o.Limits = o.Limits.withDefaults()
 	o.Headers = o.Headers.withDefaults()
 	if o.Providers == nil {
-		o.Providers = resolve.New(nil, o.Headers.UpstreamURL)
+		o.Providers = resolve.New(nil)
 	}
 	return o
 }

@@ -35,10 +35,10 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 |---|---|
 | `tollgate.go`, `options.go`, `model.go` | Public API: `New`, `Use`, `Handler`, `Options`, `Limits`, aliases of the model |
 | `internal/model/` | Neutral model (`Tenant`, `Session`, `Call`, `Event`, `Metric`) + extension interfaces + Noop defaults |
-| `internal/forward/` | Upstream transport, header filter, client-first SSE tee |
+| `internal/forward/` | Upstream target check, transport, header filter, forward + relay, client-first SSE tee |
 | `internal/chain/` | Ordered hook chain, panic guard, deadlines, Finalizer barrier |
 | `internal/normalise/` | Wire format ⇄ neutral model (OpenAI chat, Anthropic messages), provider-shaped errors |
-| `internal/resolve/` | Default `ProviderResolver` (path prefix + upstream header) |
+| `internal/resolve/` | Default `ProviderResolver` (path prefix → provider) |
 | `internal/session/` | Default `SessionStrategy` (header-or-predict, TTL sweeper) |
 | `internal/metrics/` | Bounded metric queue + batcher + drop counter |
 | `internal/archtest/` | The dependency-law gate (protected) |

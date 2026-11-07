@@ -48,3 +48,27 @@ func TestNewTransport_RoundTrips(t *testing.T) {
 		t.Fatalf("status = %d", resp.StatusCode)
 	}
 }
+
+// TestNewTransport_NeverAddsCompression proves transparency: Go's transport
+// must not add Accept-Encoding: gzip and silently decode the upstream body.
+func TestNewTransport_NeverAddsCompression(t *testing.T) {
+	got := make(chan string, 1)
+	up := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got <- r.Header.Get("Accept-Encoding")
+	}))
+	defer up.Close()
+	tr := NewTransport(TransportConfig{DialTimeout: time.Second, FirstByteTimeout: time.Second, MaxConnsPerHost: 1, MaxIdleConnsPerHost: 1, IdleConnTimeout: time.Second})
+	defer tr.CloseIdleConnections()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, up.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := tr.RoundTrip(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if ae := <-got; ae != "" {
+		t.Fatalf("transport added Accept-Encoding %q", ae)
+	}
+}

@@ -3,7 +3,8 @@ package normalise
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
+
+	"github.com/ethosagent/tollgate/internal/model"
 )
 
 // ErrorShape is the JSON error body format a client library expects.
@@ -16,18 +17,47 @@ const (
 	ShapeAnthropic
 )
 
-// ShapeForPath picks the error shape from the first path segment: /openai
-// gets the OpenAI shape, /anthropic the Anthropic shape, anything else the
+// ShapeForWire picks the error shape for a wire format: OpenAI chat gets the
+// OpenAI shape, Anthropic messages the Anthropic shape, anything else the
 // generic one.
-func ShapeForPath(path string) ErrorShape {
-	seg, _, _ := strings.Cut(strings.TrimPrefix(path, "/"), "/")
-	switch seg {
-	case "openai":
+func ShapeForWire(w model.WireFormat) ErrorShape {
+	switch w {
+	case model.WireOpenAIChat:
 		return ShapeOpenAI
-	case "anthropic":
+	case model.WireAnthropicMessages:
 		return ShapeAnthropic
 	}
 	return ShapeGeneric
+}
+
+// errorTypes maps a status to the error type each wire uses; the generic
+// shape uses the OpenAI names. A status not listed gets the fallback.
+var (
+	openAITypes = map[int]string{
+		http.StatusBadRequest:            "invalid_request_error",
+		http.StatusNotFound:              "invalid_request_error",
+		http.StatusRequestEntityTooLarge: "invalid_request_error",
+		http.StatusUnauthorized:          "authentication_error",
+		http.StatusForbidden:             "permission_error",
+		http.StatusTooManyRequests:       "rate_limit_error",
+		http.StatusGatewayTimeout:        "timeout_error",
+	}
+	anthropicTypes = map[int]string{
+		http.StatusBadRequest:            "invalid_request_error",
+		http.StatusNotFound:              "not_found_error",
+		http.StatusRequestEntityTooLarge: "request_too_large",
+		http.StatusUnauthorized:          "authentication_error",
+		http.StatusForbidden:             "permission_error",
+		http.StatusTooManyRequests:       "rate_limit_error",
+		http.StatusGatewayTimeout:        "timeout_error",
+	}
+)
+
+func errorType(types map[int]string, status int, fallback string) string {
+	if t, ok := types[status]; ok {
+		return t
+	}
+	return fallback
 }
 
 // WriteError writes a JSON error body in the given shape. The error type is
@@ -39,54 +69,18 @@ func WriteError(w http.ResponseWriter, shape ErrorShape, status int, msg string)
 	case ShapeAnthropic:
 		body = map[string]any{
 			"type":  "error",
-			"error": map[string]string{"type": anthropicType(status), "message": msg},
+			"error": map[string]string{"type": errorType(anthropicTypes, status, "api_error"), "message": msg},
 		}
 	case ShapeOpenAI:
 		body = map[string]any{
-			"error": map[string]any{"message": msg, "type": openAIType(status), "param": nil, "code": nil},
+			"error": map[string]any{"message": msg, "type": errorType(openAITypes, status, "server_error"), "param": nil, "code": nil},
 		}
 	default:
 		body = map[string]any{
-			"error": map[string]string{"type": openAIType(status), "message": msg},
+			"error": map[string]string{"type": errorType(openAITypes, status, "server_error"), "message": msg},
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body) // the status line is already sent; nothing to recover
-}
-
-func anthropicType(status int) string {
-	switch status {
-	case http.StatusBadRequest:
-		return "invalid_request_error"
-	case http.StatusUnauthorized:
-		return "authentication_error"
-	case http.StatusForbidden:
-		return "permission_error"
-	case http.StatusNotFound:
-		return "not_found_error"
-	case http.StatusRequestEntityTooLarge:
-		return "request_too_large"
-	case http.StatusTooManyRequests:
-		return "rate_limit_error"
-	case http.StatusGatewayTimeout:
-		return "timeout_error"
-	}
-	return "api_error"
-}
-
-func openAIType(status int) string {
-	switch status {
-	case http.StatusBadRequest, http.StatusNotFound, http.StatusRequestEntityTooLarge:
-		return "invalid_request_error"
-	case http.StatusUnauthorized:
-		return "authentication_error"
-	case http.StatusForbidden:
-		return "permission_error"
-	case http.StatusTooManyRequests:
-		return "rate_limit_error"
-	case http.StatusGatewayTimeout:
-		return "timeout_error"
-	}
-	return "server_error"
 }

@@ -11,9 +11,10 @@
 //
 // FixtureNames lists every fixture; Fixture returns its bytes and Chunks splits
 // it the way the fake writes it, so tests can assert exactly what a client saw
-// before a cut (Options.FailAfterChunks).
+// before a cut (Options.FailAfterChunks). PathFor gives the API path a
+// fixture's provider serves.
 //
-// Planned (plan/011): Run, a harness that drives a plugin through every
+// A later release adds Run, a harness that drives a plugin through every
 // lifecycle stage and records its calls.
 //
 // Dependency law (internal/archtest, rule D6): standard library and the root

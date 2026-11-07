@@ -3,7 +3,6 @@ package resolve
 import (
 	"context"
 	"errors"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -11,17 +10,9 @@ import (
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
-// Errors the default resolver returns. The proxy maps them to 404, 403 and
-// 400; any other resolver error also becomes a 404.
-var (
-	// ErrUnknownProvider means no provider matches the path prefix.
-	ErrUnknownProvider = errors.New("resolve: unknown provider")
-	// ErrUpstreamForbidden means the upstream override is not in the
-	// tenant's Policy.AllowedUpstreams.
-	ErrUpstreamForbidden = errors.New("resolve: upstream not allowed by policy")
-	// ErrBadUpstream means the upstream override is not a usable http(s) URL.
-	ErrBadUpstream = errors.New("resolve: invalid upstream URL")
-)
+// ErrUnknownProvider means no provider matches the path prefix. It carries no
+// status, so the proxy answers with the resolver default, 404.
+var ErrUnknownProvider = errors.New("resolve: unknown provider")
 
 // DefaultProviders returns the built-in provider table, keyed by path prefix.
 func DefaultProviders() map[string]model.Provider {
@@ -35,73 +26,48 @@ func DefaultProviders() map[string]model.Provider {
 	}
 }
 
+// builtin is a read-only copy of DefaultProviders for WireForPath.
+var builtin = DefaultProviders()
+
 // Resolver is the default model.ProviderResolver: the first path segment
-// picks the provider; an optional header overrides its base URL when the
-// tenant's policy allows the target (docs/decisions/0006).
+// picks the provider. The upstream-override header is not handled here; the
+// core applies it for every resolver (docs/decisions/0007).
 type Resolver struct {
 	providers map[string]model.Provider
-	header    string
 }
 
-// New returns a Resolver over providers (nil means DefaultProviders) that
-// reads the upstream override from header (empty disables the override).
-func New(providers map[string]model.Provider, header string) *Resolver {
+// New returns a Resolver over providers (nil means DefaultProviders).
+func New(providers map[string]model.Provider) *Resolver {
 	if providers == nil {
 		providers = DefaultProviders()
 	}
-	return &Resolver{providers: providers, header: header}
+	return &Resolver{providers: providers}
 }
 
 // Resolve implements model.ProviderResolver. restPath is the request path
 // after the provider prefix, "/" when there is none.
-func (r *Resolver) Resolve(_ context.Context, t model.Tenant, req *http.Request) (model.Provider, string, error) {
-	seg, rest, _ := strings.Cut(strings.TrimPrefix(req.URL.Path, "/"), "/")
+func (r *Resolver) Resolve(_ context.Context, _ model.Tenant, req *http.Request) (model.Provider, string, error) {
+	seg, rest := split(req.URL.Path)
 	p, ok := r.providers[seg]
 	if !ok {
 		return model.Provider{}, "", ErrUnknownProvider
 	}
-	rest = "/" + rest
-	override := ""
-	if r.header != "" {
-		override = strings.TrimSpace(req.Header.Get(r.header))
-	}
-	if override == "" || t.Policy == nil || len(t.Policy.AllowedUpstreams) == 0 {
-		return p, rest, nil // no override, or no policy to authorise it: ignored
-	}
-	u, err := parseUpstream(override)
-	if err != nil {
-		return model.Provider{}, "", err
-	}
-	if !allowed(u, t.Policy.AllowedUpstreams) {
-		return model.Provider{}, "", ErrUpstreamForbidden
-	}
-	p.BaseURL = u
 	return p, rest, nil
 }
 
-func parseUpstream(raw string) (*url.URL, error) {
-	u, err := url.Parse(raw)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil {
-		return nil, ErrBadUpstream
+// WireForPath guesses the wire format from the path prefix using the
+// built-in table, before any resolver has run (to shape early errors).
+// Unknown prefixes are WirePassthrough.
+func WireForPath(path string) model.WireFormat {
+	seg, _ := split(path)
+	if p, ok := builtin[seg]; ok {
+		return p.Wire
 	}
-	return u, nil
+	return model.WirePassthrough
 }
 
-// allowed reports whether u's host is listed exactly (host or host:port) or,
-// for an IP literal, falls inside a listed CIDR. No DNS lookups are made.
-func allowed(u *url.URL, list []string) bool {
-	host := u.Hostname()
-	ip := net.ParseIP(host)
-	for _, entry := range list {
-		if _, cidr, err := net.ParseCIDR(entry); err == nil {
-			if ip != nil && cidr.Contains(ip) {
-				return true
-			}
-			continue
-		}
-		if strings.EqualFold(entry, host) || strings.EqualFold(entry, u.Host) {
-			return true
-		}
-	}
-	return false
+// split returns the first path segment and the rest, which starts with "/".
+func split(path string) (seg, rest string) {
+	seg, rest, _ = strings.Cut(strings.TrimPrefix(path, "/"), "/")
+	return seg, "/" + rest
 }

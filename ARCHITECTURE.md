@@ -78,7 +78,7 @@ request ─► Auth ─► Admission ─► ProviderResolver ─► limits/norma
 | # | Interface | Default | Fires |
 |---|---|---|---|
 | 1 | `Authenticator` | `NoAuth` | first; error → 401/403, provider-shaped |
-| 2 | `ProviderResolver` | path prefix + upstream header (`internal/resolve`) | after Admission |
+| 2 | `ProviderResolver` | path prefix (`internal/resolve`); the core then applies the upstream override and checks the target | after Admission |
 | 3 | `SessionStrategy` | header-or-predict (`internal/session`) | after normalise |
 | 4 | `Hook` | none (embed `NoopHook`) | Before / OnEvent / OnResponse / After / OnSessionClosed |
 | 5 | `MetricSink` | `DiscardSink` | batched, off the request path |
@@ -107,6 +107,14 @@ Header names (`HeaderNames`) are options, not constants. Defaults:
 `x-proxy-key`, `x-session-id`, `x-upstream-url`. tollgate strips its own
 headers and hop-by-hop headers before forwarding.
 
+- **Upstream target (ADR 0007).** Whatever resolver ran, `forward.Target`
+  checks the final URL: the resolver's base, or the override header only when
+  `Policy.AllowedUpstreams` matches (exact host/host:port, IP or CIDR, no DNS);
+  http(s), a host, no userinfo.
+- **Transparency.** The default transport never compresses (no added
+  `Accept-Encoding`, no decoding); the inbound escaped path (`%2F`) and query
+  reach the upstream byte for byte.
+
 ## 7. Failure behaviour
 
 | Failure | Behaviour | `Metric.Finish` |
@@ -119,6 +127,12 @@ headers and hop-by-hop headers before forwarding.
 | Deadline hit | provider-shaped timeout error | `timeout` |
 | Hook panic/timeout | logged with tenant + call id; hook skipped; call proceeds | unchanged |
 | Sink down | metrics dropped and counted; `/readyz` fails after N consecutive failures | unchanged |
+
+Extension errors map to a status through one contract (ADR 0008): a
+`StatusError` with a 4xx/5xx `HTTPStatus()` wins, else the seam default (Auth
+401, Admission 429, resolver 404); `RetryAfterError` sets `Retry-After`. Core
+errors: override not allowed 403, bad override 400, body too large 413, bad
+resolver target 502, upstream unreachable 502, timed out 504.
 
 Endpoints served by the core: `ANY /{provider}/*`, `GET /healthz`,
 `GET /readyz`; later `GET /statusz` (host-only) and `GET /metrics` (optional).

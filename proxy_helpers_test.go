@@ -82,10 +82,8 @@ func readAll(t testing.TB, resp *http.Response) []byte {
 
 // pathFor maps a fixture name to the proxied path that serves its provider.
 func pathFor(fixture string) string {
-	if strings.HasPrefix(fixture, "anthropic/") {
-		return "/anthropic/v1/messages"
-	}
-	return "/openai/v1/chat/completions"
+	provider, _, _ := strings.Cut(fixture, "/")
+	return "/" + provider + testkit.PathFor(fixture)
 }
 
 // syncBuf is a goroutine-safe buffer for capturing logs.

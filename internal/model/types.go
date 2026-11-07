@@ -99,7 +99,10 @@ type Call struct {
 	Tenant   Tenant
 	Session  Session
 	Provider Provider
-	Path     string // path after the provider prefix, e.g. "/v1/chat/completions"
+	// Path is the inbound request path, provider prefix included, e.g.
+	// "/openai/v1/chat/completions". Admission sees it before the provider is
+	// resolved; the upstream path is derived later and is not stored here.
+	Path     string
 	Model    string
 	Stream   bool
 	Messages []Message

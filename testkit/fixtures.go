@@ -101,3 +101,20 @@ func fixtureContentType(name string) string {
 	}
 	return "application/json"
 }
+
+// Provider API paths the fake serves without a FixtureHeader.
+const (
+	openAIChatPath        = "/v1/chat/completions"
+	anthropicMessagesPath = "/v1/messages"
+)
+
+// PathFor returns the upstream API path a fixture's provider serves:
+// "/v1/messages" for "anthropic/..." fixtures, "/v1/chat/completions" for
+// the rest. A proxy test prefixes it with the provider, e.g.
+// "/anthropic" + PathFor(name).
+func PathFor(fixture string) string {
+	if strings.HasPrefix(fixture, "anthropic/") {
+		return anthropicMessagesPath
+	}
+	return openAIChatPath
+}

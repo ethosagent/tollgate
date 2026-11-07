@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestFilterHeaders(t *testing.T) {
+func TestHeaderFilter(t *testing.T) {
 	src := http.Header{}
 	for k, v := range map[string]string{
 		"Authorization":       "Bearer sk-1",
@@ -22,7 +22,7 @@ func TestFilterHeaders(t *testing.T) {
 	} {
 		src.Set(k, v)
 	}
-	got := FilterHeaders(src, "x-proxy-key")
+	got := NewHeaderFilter("x-proxy-key").Filter(src)
 
 	for k, want := range map[string]string{"Authorization": "Bearer sk-1", "X-Api-Key": "ak-1", "Content-Type": "application/json"} {
 		if got.Get(k) != want {
@@ -35,12 +35,24 @@ func TestFilterHeaders(t *testing.T) {
 		}
 	}
 	if src.Get("X-Proxy-Key") == "" || src.Get("Connection") == "" {
-		t.Error("FilterHeaders modified its input")
+		t.Error("Filter modified its input")
+	}
+	got["Authorization"][0] = "changed"
+	if src.Get("Authorization") != "Bearer sk-1" {
+		t.Error("Filter aliased its input's value slices")
 	}
 }
 
-func TestFilterHeaders_NilInput(t *testing.T) {
-	if got := FilterHeaders(nil); got == nil || len(got) != 0 {
+func TestHeaderFilter_CopyToAppends(t *testing.T) {
+	dst := http.Header{"Vary": {"Origin"}}
+	NewHeaderFilter().CopyTo(dst, http.Header{"Vary": {"Accept"}, "Keep-Alive": {"x"}})
+	if len(dst["Vary"]) != 2 || dst.Get("Keep-Alive") != "" {
+		t.Fatalf("dst = %v", dst)
+	}
+}
+
+func TestHeaderFilter_NilInput(t *testing.T) {
+	if got := NewHeaderFilter().Filter(nil); got == nil || len(got) != 0 {
 		t.Fatalf("got %v, want empty non-nil header", got)
 	}
 }
