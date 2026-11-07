@@ -79,10 +79,14 @@ type Limits struct {
 	MetricWriteTimeout    time.Duration // deadline of one MetricSink.Write; past it the write counts as failed
 	// MetricFailAfter is how many consecutive failed sink writes (error,
 	// panic or timeout) make /readyz answer 503; one success makes it ready.
-	MetricFailAfter     int
-	SessionTTL          time.Duration // quiet time before a session closes
-	MaxSessions         int           // live sessions kept (LRU beyond)
-	MaxConnsPerHost     int
+	MetricFailAfter int
+	SessionTTL      time.Duration // quiet time before a session closes
+	MaxSessions     int           // live sessions kept (LRU beyond)
+	MaxConnsPerHost int
+	// MaxIdleConnsPerHost is how many idle upstream connections per host are
+	// kept for reuse. Zero means MaxConnsPerHost: below it, every burst over
+	// the idle cap closes connections it will have to dial (and TLS-handshake)
+	// again on the next calls.
 	MaxIdleConnsPerHost int
 	IdleConnTimeout     time.Duration
 }
@@ -113,7 +117,7 @@ func DefaultLimits() Limits {
 		SessionTTL:            5 * time.Minute,
 		MaxSessions:           100_000,
 		MaxConnsPerHost:       100,
-		MaxIdleConnsPerHost:   20,
+		MaxIdleConnsPerHost:   100, // = MaxConnsPerHost: no churn below the connection cap
 		IdleConnTimeout:       30 * time.Second,
 	}
 }
@@ -183,7 +187,7 @@ func (l Limits) withDefaults() Limits {
 	l.SessionTTL = cmp.Or(l.SessionTTL, d.SessionTTL)
 	l.MaxSessions = cmp.Or(l.MaxSessions, d.MaxSessions)
 	l.MaxConnsPerHost = cmp.Or(l.MaxConnsPerHost, d.MaxConnsPerHost)
-	l.MaxIdleConnsPerHost = cmp.Or(l.MaxIdleConnsPerHost, d.MaxIdleConnsPerHost)
+	l.MaxIdleConnsPerHost = cmp.Or(l.MaxIdleConnsPerHost, l.MaxConnsPerHost)
 	l.IdleConnTimeout = cmp.Or(l.IdleConnTimeout, d.IdleConnTimeout)
 	return l
 }

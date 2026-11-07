@@ -37,7 +37,7 @@ func TestDefaultLimits_MatchDocumentedValues(t *testing.T) {
 		{"SessionTTL", d.SessionTTL, 5 * time.Minute},
 		{"MaxSessions", d.MaxSessions, 100_000},
 		{"MaxConnsPerHost", d.MaxConnsPerHost, 100},
-		{"MaxIdleConnsPerHost", d.MaxIdleConnsPerHost, 20},
+		{"MaxIdleConnsPerHost", d.MaxIdleConnsPerHost, 100},
 		{"IdleConnTimeout", d.IdleConnTimeout, 30 * time.Second},
 	}
 	for _, c := range checks {
@@ -54,6 +54,21 @@ func TestLimits_PartialOverrideKeepsOtherDefaults(t *testing.T) {
 	want.SessionTTL = time.Minute
 	if got != want {
 		t.Fatalf("got %+v\nwant %+v", got, want)
+	}
+}
+
+// TestLimits_IdleConnsFollowMaxConns: an unset idle pool is as large as the
+// connection cap, so concurrency up to the cap never churns connections; an
+// explicit value is kept.
+func TestLimits_IdleConnsFollowMaxConns(t *testing.T) {
+	if got := (Limits{MaxConnsPerHost: 400}).withDefaults().MaxIdleConnsPerHost; got != 400 {
+		t.Fatalf("idle = %d, want 400 (MaxConnsPerHost)", got)
+	}
+	if got := (Limits{MaxConnsPerHost: 400, MaxIdleConnsPerHost: 50}).withDefaults().MaxIdleConnsPerHost; got != 50 {
+		t.Fatalf("idle = %d, want the explicit 50", got)
+	}
+	if d := DefaultLimits(); d.MaxIdleConnsPerHost != d.MaxConnsPerHost {
+		t.Fatalf("default idle %d != default max conns %d", d.MaxIdleConnsPerHost, d.MaxConnsPerHost)
 	}
 }
 
