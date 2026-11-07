@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -60,6 +61,20 @@ func TestRegistry_ProviderLabelValuesAreBounded(t *testing.T) {
 	}
 }
 
+func TestRegistry_NoneAndOtherDoNotTakeProviderSlots(t *testing.T) {
+	r := NewRegistry()
+	r.Observe(model.Metric{Finish: model.FinishRejected, Status: 401}) // no provider: "none"
+	for i := range MaxProviders + 1 {
+		r.Observe(model.Metric{Provider: fmt.Sprintf("p%d", i), Finish: model.FinishOK, Status: 200})
+	}
+	if n := countOf(r.Snapshot(), fmt.Sprintf("p%d", MaxProviders-1), model.FinishOK, "2xx"); n != 1 {
+		t.Fatalf("provider #%d counted %d times under its own name, want 1", MaxProviders, n)
+	}
+	if n := countOf(r.Snapshot(), "other", model.FinishOK, "2xx"); n != 1 {
+		t.Fatalf("other = %d, want 1 (only the provider past MaxProviders)", n)
+	}
+}
+
 func TestRegistry_LatencyHistogramIsCumulative(t *testing.T) {
 	r := NewRegistry()
 	for _, d := range []time.Duration{3 * time.Millisecond, 80 * time.Millisecond, 80 * time.Millisecond, time.Hour} {
@@ -110,4 +125,24 @@ func TestRegistry_ConcurrentObserveIsExact(t *testing.T) {
 	if countOf(s, "openai", model.FinishOK, "2xx") != 2000 || s.Latency.Count != 2000 {
 		t.Fatalf("snapshot = %+v, want 2000 calls", s)
 	}
+}
+
+// BenchmarkRegistry_ObserveParallel is the per-call cost of counting a
+// finished call while every core finishes calls at once (HOT-6, HOT-7).
+func BenchmarkRegistry_ObserveParallel(b *testing.B) {
+	r := NewRegistry()
+	providers := []string{"openai", "anthropic", "openrouter"}
+	ids := make([]string, 1024) // call IDs as the proxy makes them: prefix + counter
+	for i := range ids {
+		ids[i] = "q3k9x0a1b2c3-" + strconv.FormatUint(uint64(i), 36)
+	}
+	b.ReportAllocs()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			i++
+			r.Observe(model.Metric{CallID: ids[i%len(ids)], Provider: providers[i%3], Finish: model.FinishOK, Status: 200,
+				Duration: time.Duration(i%500) * time.Millisecond, Usage: model.Usage{InputTokens: 10, OutputTokens: 5}})
+		}
+	})
 }

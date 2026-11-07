@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"bufio"
+	"cmp"
 	"fmt"
 	"io"
 	"slices"
@@ -35,7 +36,8 @@ func WriteProm(w io.Writer, r Report) error {
 	p.family("tollgate_calls_total", "counter", "Completed calls by provider, finish and status class.")
 	calls := slices.Clone(r.Snapshot.Calls)
 	slices.SortFunc(calls, func(a, b CallCount) int {
-		return strings.Compare(a.Provider+"/"+string(a.Finish)+"/"+a.StatusClass, b.Provider+"/"+string(b.Finish)+"/"+b.StatusClass)
+		return cmp.Or(strings.Compare(a.Provider, b.Provider), strings.Compare(string(a.Finish), string(b.Finish)),
+			strings.Compare(a.StatusClass, b.StatusClass))
 	})
 	for _, c := range calls {
 		p.sample("tollgate_calls_total", num(c.N), "provider", c.Provider, "finish", string(c.Finish), "status_class", c.StatusClass)
@@ -123,6 +125,6 @@ func num(n int64) string { return strconv.FormatInt(n, 10) }
 
 // escapeLabel escapes a label value per the text format: backslash, double
 // quote and newline.
-func escapeLabel(s string) string {
-	return strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`).Replace(s)
-}
+func escapeLabel(s string) string { return labelEscaper.Replace(s) }
+
+var labelEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`, "\n", `\n`)
