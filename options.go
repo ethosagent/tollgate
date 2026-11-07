@@ -42,7 +42,12 @@ type Options struct {
 
 // Limits bounds every call. A zero field takes its DefaultLimits value.
 type Limits struct {
-	MaxRequestBody     int64         // bytes, checked before parsing
+	MaxRequestBody int64 // bytes, checked before parsing
+	// MaxResponseCopy caps the copy of a stream:false response kept to read
+	// its usage when no OnResponse hook holds it (the client never waits for
+	// the copy). A larger response has no usage in its Metric and is counted
+	// (statusz hooks.usage_not_read).
+	MaxResponseCopy    int64
 	ConnectTimeout     time.Duration // upstream dial
 	FirstByteTimeout   time.Duration // time to first upstream byte
 	IdleStreamTimeout  time.Duration // no bytes on an open stream
@@ -77,6 +82,7 @@ type Limits struct {
 func DefaultLimits() Limits {
 	return Limits{
 		MaxRequestBody:      16 << 20,
+		MaxResponseCopy:     1 << 20,
 		ConnectTimeout:      10 * time.Second,
 		FirstByteTimeout:    60 * time.Second,
 		IdleStreamTimeout:   120 * time.Second,
@@ -144,6 +150,7 @@ func (o Options) withDefaults() Options {
 func (l Limits) withDefaults() Limits {
 	d := DefaultLimits()
 	l.MaxRequestBody = cmp.Or(l.MaxRequestBody, d.MaxRequestBody)
+	l.MaxResponseCopy = cmp.Or(l.MaxResponseCopy, d.MaxResponseCopy)
 	l.ConnectTimeout = cmp.Or(l.ConnectTimeout, d.ConnectTimeout)
 	l.FirstByteTimeout = cmp.Or(l.FirstByteTimeout, d.FirstByteTimeout)
 	l.IdleStreamTimeout = cmp.Or(l.IdleStreamTimeout, d.IdleStreamTimeout)
@@ -202,6 +209,7 @@ func (l Limits) validate() error {
 		value int64
 	}{
 		{"MaxRequestBody", l.MaxRequestBody},
+		{"MaxResponseCopy", l.MaxResponseCopy},
 		{"ConnectTimeout", int64(l.ConnectTimeout)},
 		{"FirstByteTimeout", int64(l.FirstByteTimeout)},
 		{"IdleStreamTimeout", int64(l.IdleStreamTimeout)},

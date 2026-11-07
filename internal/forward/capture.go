@@ -2,7 +2,6 @@ package forward
 
 import (
 	"bytes"
-	"mime"
 	"net/http"
 	"strconv"
 	"time"
@@ -52,20 +51,23 @@ func (c *Capture) WriteHeader(code int) {
 		return
 	}
 	c.started, c.status = true, code
-	if reason := c.unholdable(); reason != "" {
+	if reason := unholdable(c.hdr, c.limit); reason != "" {
 		_ = c.pass(reason)
 	}
 }
 
-// unholdable says why the response just announced cannot be held, or "".
-func (c *Capture) unholdable() string {
-	if n, err := strconv.ParseInt(c.hdr.Get("Content-Length"), 10, 64); err == nil && n > c.limit {
+// unholdable is the one rule for whether a response announced with h can be
+// kept in memory for reading (Capture, BodyCopy): it returns why not, or "".
+// limit caps the body; a larger declared length, an encoded body or an
+// event stream cannot be kept.
+func unholdable(h http.Header, limit int64) string {
+	if n, err := strconv.ParseInt(h.Get("Content-Length"), 10, 64); err == nil && n > limit {
 		return SkipOverCap
 	}
-	if enc := c.hdr.Get("Content-Encoding"); enc != "" && enc != "identity" {
+	if enc := h.Get("Content-Encoding"); enc != "" && enc != "identity" {
 		return SkipEncoded
 	}
-	if mt, _, err := mime.ParseMediaType(c.hdr.Get("Content-Type")); err == nil && mt == "text/event-stream" {
+	if isEventStream(h) {
 		return SkipStreaming
 	}
 	return ""

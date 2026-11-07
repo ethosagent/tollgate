@@ -15,13 +15,14 @@ func TestBodyCopy_WritesThroughAndKeepsACopy(t *testing.T) {
 		writes   []string
 		wantBody string
 		wantOK   bool
+		reason   string // why the copy was skipped (the same reasons as Capture)
 	}{
 		{name: "plain json", limit: 100, header: map[string]string{"Content-Type": "application/json"}, writes: []string{`{"a":`, `1}`}, wantBody: `{"a":1}`, wantOK: true},
-		{name: "over the cap is not kept", limit: 4, writes: []string{"abc", "def"}, wantOK: false},
-		{name: "encoded bodies are not readable", limit: 100, header: map[string]string{"Content-Encoding": "gzip"}, writes: []string{"x"}, wantOK: false},
+		{name: "over the cap is not kept", limit: 4, writes: []string{"abc", "def"}, wantOK: false, reason: SkipOverCap},
+		{name: "encoded bodies are not readable", limit: 100, header: map[string]string{"Content-Encoding": "gzip"}, writes: []string{"x"}, wantOK: false, reason: SkipEncoded},
 		{name: "identity encoding is readable", limit: 100, header: map[string]string{"Content-Encoding": "identity"}, writes: []string{"x"}, wantBody: "x", wantOK: true},
-		{name: "event streams are not kept", limit: 100, header: map[string]string{"Content-Type": "text/event-stream; charset=utf-8"}, writes: []string{"data: x\n\n"}, wantOK: false},
-		{name: "declared length over the cap", limit: 4, header: map[string]string{"Content-Length": "50"}, writes: []string{"ab"}, wantOK: false},
+		{name: "event streams are not kept", limit: 100, header: map[string]string{"Content-Type": "text/event-stream; charset=utf-8"}, writes: []string{"data: x\n\n"}, wantOK: false, reason: SkipStreaming},
+		{name: "declared length over the cap", limit: 4, header: map[string]string{"Content-Length": "50"}, writes: []string{"ab"}, wantOK: false, reason: SkipOverCap},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,6 +45,9 @@ func TestBodyCopy_WritesThroughAndKeepsACopy(t *testing.T) {
 			body, status, ok := c.Held()
 			if ok != tt.wantOK || (ok && (string(body) != tt.wantBody || status != http.StatusTeapot)) {
 				t.Fatalf("Held = %q %d %v, want %q %v", body, status, ok, tt.wantBody, tt.wantOK)
+			}
+			if got := c.Skipped(); got != tt.reason {
+				t.Fatalf("Skipped = %q, want %q", got, tt.reason)
 			}
 		})
 	}

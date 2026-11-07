@@ -16,6 +16,7 @@ import (
 type hookStats struct {
 	unbuffered    atomic.Int64 // stream:false responses passed without OnResponse
 	droppedFrames atomic.Int64 // SSE frames that never reached the consumer
+	usageNotRead  atomic.Int64 // stream:false responses whose usage copy was given up
 }
 
 // serveCall forwards one admitted call (ARCHITECTURE.md section 4). When
@@ -49,7 +50,7 @@ func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 		held = forward.NewCapture(o.w, p.opts.Limits.MaxRequestBody, heldSkip{p, o}.skipped)
 		body = held
 	case p.wantsUsage(o.chn): // usage only: the client is not made to wait for it
-		cp = forward.NewBodyCopy(o.w, p.opts.Limits.MaxRequestBody)
+		cp = forward.NewBodyCopy(o.w, p.opts.Limits.MaxResponseCopy)
 		body = cp
 	}
 	res := p.relay(body, r, o, req)
@@ -67,6 +68,9 @@ func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 // response has no usage.
 func (p *Proxy) copiedUsage(o *outcome, wire normalise.Wire, cp *forward.BodyCopy, res forward.Result) {
 	body, status, ok := cp.Held()
+	if cp.Skipped() != "" {
+		p.stats.usageNotRead.Add(1)
+	}
 	if !ok || res.Cut || status >= http.StatusBadRequest {
 		return
 	}

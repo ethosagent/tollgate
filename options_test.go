@@ -15,6 +15,7 @@ func TestDefaultLimits_MatchDocumentedValues(t *testing.T) {
 		got, want any
 	}{
 		{"MaxRequestBody", d.MaxRequestBody, int64(16 << 20)},
+		{"MaxResponseCopy", d.MaxResponseCopy, int64(1 << 20)},
 		{"ConnectTimeout", d.ConnectTimeout, 10 * time.Second},
 		{"FirstByteTimeout", d.FirstByteTimeout, 60 * time.Second},
 		{"IdleStreamTimeout", d.IdleStreamTimeout, 120 * time.Second},

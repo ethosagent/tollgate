@@ -266,3 +266,24 @@ func TestMetrics_StartWithoutASinkDoesNothing(t *testing.T) {
 	}
 	closeProxy(t, p)
 }
+
+// TestMetrics_ResponseOverMaxResponseCopyIsCountedNotRead: a stream:false
+// response is copied for its usage only up to Limits.MaxResponseCopy; a
+// larger one reaches the client whole, has no usage and is counted, never
+// silently (STR-8).
+func TestMetrics_ResponseOverMaxResponseCopyIsCountedNotRead(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	sink := &collectSink{}
+	p, base := sinkProxy(t, sink, tollgate.Limits{MaxResponseCopy: 16})
+	resp := post(t, base, chatPath, []byte(plainRequest), via(up))
+	if body := readAll(t, resp); resp.StatusCode != 200 || len(body) <= 16 {
+		t.Fatalf("client got %d, %d bytes; want the whole response", resp.StatusCode, len(body))
+	}
+	eventually(t, "the call's metric", func() bool { return len(sink.metrics()) == 1 })
+	if u := sink.metrics()[0].Usage; u != (tollgate.Usage{}) {
+		t.Fatalf("usage = %+v, want none: the response was over the copy cap", u)
+	}
+	if n := getStatusz(t, adminServer(t, p)).Hooks.UsageNotRead; n != 1 {
+		t.Fatalf("statusz hooks.usage_not_read = %d, want 1", n)
+	}
+}
