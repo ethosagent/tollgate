@@ -122,7 +122,7 @@ func TestHooks_UseAfterHandlerAppliesOnlyToLaterCalls(t *testing.T) {
 		before: func(context.Context, *tollgate.Call) (*tollgate.Response, error) { h2Befores.Add(1); return nil, nil },
 		after:  func(context.Context, *tollgate.Call, tollgate.Metric) { h2Afters.Add(1) }}
 	opts := tollgate.Options{Limits: tollgate.Limits{HookBeforeDeadline: 10 * time.Second, HookChainDeadline: 20 * time.Second}}
-	base, p := newHookedProxy(t, opts, h1)
+	base, settled, p := metricProxy(t, opts, h1) // a call's Metric is emitted after its After hooks ran
 
 	inFlight := make(chan struct{})
 	go func() {
@@ -133,17 +133,14 @@ func TestHooks_UseAfterHandlerAppliesOnlyToLaterCalls(t *testing.T) {
 	p.Use(h2) // call A is inside its Before chain
 	close(gate)
 	<-inFlight
-	if h2Befores.Load() != 0 {
+	eventually(t, "call A settled", func() bool { return len(settled.all()) == 1 })
+	if h2Befores.Load() != 0 || h2Afters.Load() != 0 {
 		t.Fatal("a hook added mid-call ran for that call")
 	}
 	_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
 	eventually(t, "h2 After for call B", func() bool { return h2Afters.Load() == 1 })
 	if h2Befores.Load() != 1 || h1Calls.Load() != 2 {
 		t.Fatalf("h2 Before ran %d times, h1 %d; want 1 and 2", h2Befores.Load(), h1Calls.Load())
-	}
-	time.Sleep(20 * time.Millisecond)
-	if h2Afters.Load() != 1 {
-		t.Fatal("h2 After ran for call A")
 	}
 }
 

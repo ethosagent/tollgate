@@ -9,3 +9,7 @@ func (p *Proxy) UnbufferedResponses() int64 { return p.stats.unbuffered.Load() }
 
 // DroppedEvents is how many SSE frames never reached the OnEvent hooks.
 func (p *Proxy) DroppedEvents() int64 { return p.stats.droppedFrames.Load() }
+
+// SetMetricOut connects f where milestone 006 will connect the metrics
+// queue. Call it before serving.
+func (p *Proxy) SetMetricOut(f func(Metric)) { p.metricOut = f }

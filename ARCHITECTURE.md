@@ -78,6 +78,10 @@ request ─► Auth ─► Admission ─► ProviderResolver ─► limits/norma
   bounded channel consumed by OnEvent hooks in another goroutine.
 - Admission fires right after Auth so a rejected tenant costs nothing.
 - Finalizers hold only the terminal event (`[DONE]` / `message_stop`).
+- Every call, rejected or not, ends in one per-call record (`outcome`,
+  `record.go`): `finishCall` builds its one `Metric` and hands it to After,
+  then to the metric sink seam. With no hook and no sink nothing is parsed
+  and no goroutine starts.
 
 ## 5. Seams (extension points)
 

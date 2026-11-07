@@ -8,6 +8,7 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/ethosagent/tollgate/internal/chain"
 	"github.com/ethosagent/tollgate/internal/forward"
 )
 
@@ -21,8 +22,13 @@ type Proxy struct {
 	idPrefix   string               // random per Proxy; call IDs are idPrefix + counter
 	callSeq    atomic.Uint64
 
-	mu    sync.RWMutex
-	hooks []Hook
+	useMu sync.Mutex                  // serialises Use; readers never lock
+	chain atomic.Pointer[chain.Chain] // the hooks a new call runs: one atomic load per call
+
+	// metricOut receives every call's Metric once After has run (record.go).
+	// Milestone 006 sets it to the metrics queue's non-blocking offer; while
+	// it is nil and no hook needs it, a call skips parsing and usage.
+	metricOut func(Metric)
 
 	stats hookStats
 }
@@ -48,29 +54,19 @@ func New(opts Options) (*Proxy, error) {
 		reqHeaders: forward.NewHeaderFilter(append([]string{h.TenantKey, h.Session, h.UpstreamURL}, opts.consumedHeaders()...)...),
 		idPrefix:   rand.Text()[:12] + "-",
 	}
+	p.chain.Store(chain.New(nil, opts.Logger, chain.Limits{Hook: opts.Limits.HookBeforeDeadline, Total: opts.Limits.HookChainDeadline}))
 	p.handler = p.buildHandler()
 	return p, nil
 }
 
 // Use appends hooks to the ordered hook chain. A nil hook is ignored. Hooks
-// added after serving starts apply to calls that start afterwards.
+// added after serving starts apply to calls that start afterwards. Which Hook
+// methods each hook overrides (rather than inherits from an embedded
+// NoopHook) is detected here, once, so stages no hook implements cost nothing.
 func (p *Proxy) Use(hooks ...Hook) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	for _, h := range hooks {
-		if h != nil {
-			p.hooks = append(p.hooks, h)
-		}
-	}
-}
-
-// snapshotHooks returns the current chain; callers must not modify it. The
-// full slice expression caps capacity, so a concurrent Use appends to a new
-// array instead of writing into the one a caller is reading.
-func (p *Proxy) snapshotHooks() []Hook {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-	return p.hooks[:len(p.hooks):len(p.hooks)]
+	p.useMu.Lock()
+	defer p.useMu.Unlock()
+	p.chain.Store(p.chain.Load().With(hooks...))
 }
 
 // Handler returns the HTTP handler: health endpoints plus the proxy.

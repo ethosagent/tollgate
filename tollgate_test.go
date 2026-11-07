@@ -48,7 +48,7 @@ func TestUse_AppendsInOrderAndSkipsNil(t *testing.T) {
 	}
 	p.Use(namedHook{name: "a"}, nil)
 	p.Use(namedHook{name: "b"})
-	got := p.snapshotHooks()
+	got := p.chain.Load().Hooks()
 	if len(got) != 2 || got[0].Name() != "a" || got[1].Name() != "b" {
 		t.Fatalf("hooks = %v", got)
 	}

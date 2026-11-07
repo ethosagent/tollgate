@@ -145,3 +145,27 @@ func TestHooks_ClientCancelStillEndsConsumerAndRunsAfter(t *testing.T) {
 		t.Fatal("After never ran for a cancelled call")
 	}
 }
+
+// TestHooks_StuckOnEventDoesNotHoldAfter covers STR-9: an OnEvent hook that
+// ignores its context pins only the consumer; After still runs, bounded by
+// twice HookChainDeadline after the call ends.
+func TestHooks_StuckOnEventDoesNotHoldAfter(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	unblock := make(chan struct{})
+	t.Cleanup(func() { close(unblock) })
+	after := make(chan tollgate.Metric, 1)
+	h := &tHook{name: "stuck",
+		onEvent: func(context.Context, *tollgate.Call, tollgate.Event) { <-unblock },
+		after:   func(_ context.Context, _ *tollgate.Call, m tollgate.Metric) { after <- m }}
+	opts := tollgate.Options{Limits: tollgate.Limits{HookBeforeDeadline: 20 * time.Millisecond, HookChainDeadline: 50 * time.Millisecond}}
+	base, _ := newHookedProxy(t, opts, h)
+	_ = readAll(t, post(t, base, chatPath, requestBody(t, streamFixture), via(up)))
+	select {
+	case m := <-after:
+		if m.Finish != tollgate.FinishOK {
+			t.Fatalf("metric = %+v", m)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("After never ran: a stuck OnEvent hook held it")
+	}
+}

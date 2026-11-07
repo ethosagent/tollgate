@@ -71,6 +71,9 @@ func (c *Chain) With(hooks ...model.Hook) *Chain {
 	return n
 }
 
+// Hooks returns the hooks in order; callers must not modify the slice.
+func (c *Chain) Hooks() []model.Hook { return slices.Clip(c.all) }
+
 // Empty reports whether the chain has no hooks.
 func (c *Chain) Empty() bool { return len(c.all) == 0 }
 
