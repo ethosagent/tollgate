@@ -42,6 +42,7 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 | `internal/session/` | Default `SessionStrategy` (header-or-predict, TTL sweeper) |
 | `internal/metrics/` | Bounded metric queue + batcher + drop counter |
 | `internal/fixtures/` | Recorded provider fixtures (leaf, stdlib only); re-exported by `testkit` |
+| `internal/methodset/` | Own-code vs promoted method detection (leaf); shared by `chain`, `testkit`, root |
 | `internal/archtest/` | The dependency-law gate (protected) |
 | `testkit/` | Public: fake upstream + plugin harness for extension authors |
 | `ext/<area>/<name>/` | Built-in and example extensions (public API only) |
@@ -55,7 +56,7 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 - **D3** `internal/*` → stdlib + `internal/*`. Never root, `ext`, `testkit`, `cmd`. In-package tests use `internal/fixtures` (importing `testkit` would be a cycle).
 - **D4** root `tollgate` → stdlib + `internal/*`. **No third-party deps in the core.**
 - **D5** `ext/**`, `cmd/**` → public API only. Never `internal/`; `testkit` only in tests (except the `cmd/tollgate-bench` dev tool).
-- **D6** `testkit` → stdlib + root + `internal/fixtures`; `internal/fixtures` → stdlib only.
+- **D6** `testkit` → stdlib + root + `internal/fixtures` + `internal/methodset`; those two leaves → stdlib only.
 - **D7** third-party imports need an allowlist entry in archtest **and an ADR**.
 - **P1** every package has a doc comment (`doc.go`): read it before the code.
 

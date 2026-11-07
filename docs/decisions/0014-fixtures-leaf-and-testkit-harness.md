@@ -40,3 +40,8 @@ tests (D5), which archtest did not check before.
 - The bench stays on the public API, so it measures what a host sees.
 - Enforced by `internal/archtest` (`TestArchitecture`,
   `TestCheck_RejectsKnownBadEdges`).
+- Amended 2026-11-08 (milestone 013 cleanup): a second standard-library-only
+  leaf, `internal/methodset` (layer `leaf`), holds the "own method or
+  promoted from NoopHook" rule that `internal/chain` and testkit's harness
+  both need, so the two can no longer drift. testkit may import it (D6);
+  it may import nothing but the standard library.

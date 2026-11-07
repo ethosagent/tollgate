@@ -34,6 +34,8 @@ func layer(rel string) string {
 		return "archtest"
 	case rel == "internal/fixtures":
 		return "fixtures"
+	case rel == "internal/methodset":
+		return "leaf"
 	case strings.HasPrefix(rel, "internal/"):
 		return "internal"
 	case rel == "testkit" || strings.HasPrefix(rel, "testkit/"):
@@ -62,8 +64,9 @@ var rules = []rule{
 	{"D4", []string{"root"}, either(isStd, isInternal), "the core has no third-party dependencies and never imports ext, testkit or cmd"},
 	{"D5", []string{"ext", "cmd"}, both(publicOnly, not(isTestkit)), "extensions and the binary use the public API only: never internal/, and testkit only from tests"},
 	{"D5", []string{"tool"}, publicOnly, "a developer tool uses the public API (testkit included) only: never internal/"},
-	{"D6", []string{"testkit"}, either(isStd, isRoot, isFixtures), "testkit depends on the public API, internal/fixtures and the standard library only"},
+	{"D6", []string{"testkit"}, either(isStd, isRoot, isFixtures, isMethodset), "testkit depends on the public API, internal/fixtures, internal/methodset and the standard library only"},
 	{"D6", []string{"fixtures"}, isStd, "internal/fixtures is a leaf: standard library only"},
+	{"D6", []string{"leaf"}, isStd, "internal/methodset is a leaf: standard library only"},
 	{"D6", []string{"archtest"}, isStd, "the architecture gate depends on the standard library only"},
 }
 
@@ -121,6 +124,8 @@ func TestCheck_RejectsKnownBadEdges(t *testing.T) {
 		{"cmd", "cmd/tollgated", module + "/internal/forward", "D5"},
 		{"testkit", "testkit", module + "/internal/model", "D6"},
 		{"fixtures", "internal/fixtures", module + "/internal/model", "D6"},
+		{"leaf", "internal/methodset", module + "/internal/model", "D6"},
+		{"testkit", "testkit", module + "/internal/chain", "D6"},
 		{"ext", "ext/monitors", module + "/testkit", "D5"},
 		{"cmd", "cmd/tollgated", module + "/testkit", "D5"},
 		{"tool", "cmd/tollgate-bench", module + "/internal/fixtures", "D5"},
@@ -138,6 +143,8 @@ func TestCheck_RejectsKnownBadEdges(t *testing.T) {
 		{"cmd", "cmd/tollgated", module + "/ext/monitors"},
 		{"testkit", "testkit", "net/http/httptest"},
 		{"testkit", "testkit", module + "/internal/fixtures"},
+		{"testkit", "testkit", module + "/internal/methodset"},
+		{"internal", "internal/chain", module + "/internal/methodset"},
 		{"tool", "cmd/tollgate-bench", module + "/testkit"},
 	}
 	for _, g := range good {
@@ -204,9 +211,10 @@ func isStd(imp string) bool {
 	return !strings.Contains(first, ".")
 }
 
-func isRoot(imp string) bool     { return imp == module }
-func isInternal(imp string) bool { return strings.HasPrefix(imp, module+"/internal/") }
-func isFixtures(imp string) bool { return imp == module+"/internal/fixtures" }
+func isRoot(imp string) bool      { return imp == module }
+func isInternal(imp string) bool  { return strings.HasPrefix(imp, module+"/internal/") }
+func isFixtures(imp string) bool  { return imp == module+"/internal/fixtures" }
+func isMethodset(imp string) bool { return imp == module+"/internal/methodset" }
 func isTestkit(imp string) bool {
 	return imp == module+"/testkit" || strings.HasPrefix(imp, module+"/testkit/")
 }

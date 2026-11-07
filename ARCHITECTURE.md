@@ -39,7 +39,7 @@ Use these words everywhere. Do not add product-specific terms to the library.
 cmd/tollgated ─┐
 ext/**        ─┼──► tollgate (root: public API) ──► internal/* ──► internal/model
 testkit       ─┘                                       (engine)      (neutral model)
-   └──────────────────────────────────────────────► internal/fixtures (leaf: test data)
+   └──────────────────────────────────────────────► internal/fixtures, internal/methodset (leaves)
 ```
 
 | Layer | Packages | May import | Rule |
@@ -49,8 +49,9 @@ testkit       ─┘                                       (engine)      (neutra
 | root | `tollgate` | stdlib, `internal/*` | D4 |
 | ext, cmd | `ext/**`, `cmd/**` | stdlib, root, `ext/**`, allowlisted third-party; never `testkit` | D5 |
 | tool | `cmd/tollgate-bench` | as ext/cmd, plus `testkit` | D5 |
-| testkit | `testkit/**` | stdlib, root, `internal/fixtures` | D6 |
+| testkit | `testkit/**` | stdlib, root, `internal/fixtures`, `internal/methodset` | D6 |
 | fixtures | `internal/fixtures` | stdlib | D6 |
+| leaf | `internal/methodset` (where a method comes from: own code or promoted) | stdlib | D6 |
 | archtest | `internal/archtest` | stdlib | D6 |
 
 D1: a package outside every layer fails the gate. D7: any third-party import
