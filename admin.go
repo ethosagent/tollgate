@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/ethosagent/tollgate/internal/metrics"
+	"github.com/ethosagent/tollgate/internal/session"
 )
 
 // initMetrics creates the metric queue when the host configured a sink.
@@ -135,6 +136,10 @@ func (p *Proxy) report() metrics.Report {
 		st := p.queue.Stats()
 		r.Queue = &st
 	}
+	if s := p.sessionStatus(); s != nil {
+		r.Sessions = &metrics.SessionCounts{Live: int64(s.Live), Expired: s.Expired, Evicted: s.Evicted,
+			Replaced: s.Replaced, ClosedDropped: s.ClosedDropped}
+	}
 	return r
 }
 
@@ -174,7 +179,7 @@ type statuszDoc struct {
 		UsageNotRead        int64 `json:"usage_not_read"`
 	} `json:"hooks"`
 	// Sessions is absent when the host supplied its own SessionStrategy.
-	Sessions *statuszSessions `json:"sessions,omitempty"`
+	Sessions *session.Stats `json:"sessions,omitempty"`
 }
 
 func statuszOf(r metrics.Report) statuszDoc {

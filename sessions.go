@@ -29,7 +29,8 @@ func (p *Proxy) initSessions() {
 		return
 	}
 	l := p.opts.Limits
-	p.sessions.def = session.New(session.Config{TTL: l.SessionTTL, Max: l.MaxSessions})
+	p.sessions.def = session.New(session.Config{TTL: l.SessionTTL, Max: l.MaxSessions,
+		MeasurePrediction: p.opts.MeasureSessionPrediction})
 	p.opts.Sessions = p.sessions.def
 }
 
@@ -121,26 +122,12 @@ func (p *Proxy) closeSessions(ctx context.Context) error {
 	}
 }
 
-// statuszSessions is the sessions section of /statusz.
-type statuszSessions struct {
-	Live          int   `json:"live"`
-	Expired       int64 `json:"expired"`
-	Evicted       int64 `json:"evicted"`
-	Replaced      int64 `json:"replaced"`
-	ClosedDropped int64 `json:"closed_dropped"`
-	// Agree and Disagree count header-carrying calls the predictor also
-	// attributed: the same way as the header, or differently.
-	Agree    int64 `json:"predict_agree"`
-	Disagree int64 `json:"predict_disagree"`
-}
-
-// sessionStatus returns the default store's counters, or nil for a host
-// strategy (its internals are its own).
-func (p *Proxy) sessionStatus() *statuszSessions {
+// sessionStatus returns the default store's counters (the sessions section
+// of /statusz), or nil for a host strategy (its internals are its own).
+func (p *Proxy) sessionStatus() *session.Stats {
 	if p.sessions.def == nil {
 		return nil
 	}
 	s := p.sessions.def.Stats()
-	return &statuszSessions{Live: s.Live, Expired: s.Expired, Evicted: s.Evicted, Replaced: s.Replaced,
-		ClosedDropped: s.ClosedDropped, Agree: s.Agree, Disagree: s.Disagree}
+	return &s
 }

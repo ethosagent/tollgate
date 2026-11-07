@@ -14,14 +14,21 @@ const minSweep = 10 * time.Millisecond
 // the TTL, so a session closes within 1.25 x TTL of its last call.
 func (s *Strategy) period() time.Duration { return max(s.cfg.TTL/4, minSweep) }
 
-// arm starts the sweeper timer if it is not running. It is called after a
-// session may have been added, and takes the lock only then, so tick cannot
-// stop the timer between a session's insertion and this call.
+// arm starts the sweeper timer if it is not running. It is called on every
+// Resolve, after a session may have been added. While the timer is armed it
+// is one atomic load: no lock (HOT-6). The wakeup cannot be lost: tick
+// clears armed before it counts the live sessions, so either it sees a
+// session inserted before this load, or this load sees armed false and
+// takes the lock to re-arm (Go atomics are sequentially consistent).
 func (s *Strategy) arm() {
+	if s.armed.Load() {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if !s.closed && s.timer == nil {
 		s.timer = time.AfterFunc(s.period(), s.tick)
+		s.armed.Store(true)
 	}
 }
 
@@ -31,12 +38,18 @@ func (s *Strategy) arm() {
 func (s *Strategy) tick() {
 	now := time.Now()
 	s.emit(sessionsOf(s.live.sweep(now, s.cfg.TTL)), &s.expired)
-	s.shadow.sweep(now, s.cfg.TTL)
+	shadowLive := int64(0)
+	if s.shadow != nil {
+		s.shadow.sweep(now, s.cfg.TTL)
+		shadowLive = s.shadow.n.Load()
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.timer = nil
-	if !s.closed && s.live.n.Load()+s.shadow.n.Load() > 0 {
+	s.armed.Store(false) // before the count: see arm
+	if !s.closed && s.live.n.Load()+shadowLive > 0 {
 		s.timer = time.AfterFunc(s.period(), s.tick)
+		s.armed.Store(true)
 	}
 }
 

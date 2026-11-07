@@ -28,9 +28,21 @@ func sessionsStatusz(t *testing.T, admin string) *sessionsStatus {
 	return doc.Sessions
 }
 
-func TestSession_StatuszCountsPredictionAccuracyForHeaderCalls(t *testing.T) {
+func TestSession_PredictionAccuracyIsNotMeasuredByDefault(t *testing.T) {
 	up := testkit.NewFakeUpstream(t, testkit.Options{})
 	base, p, _ := newSessionProxy(t, tollgate.Options{})
+	admin := adminServer(t, p)
+	for step := 1; step <= 2; step++ {
+		_ = readAll(t, post(t, base, msgsPath, agentStep(t, step), via(up, "x-session-id", "run-1")))
+	}
+	if s := sessionsStatusz(t, admin); s == nil || s.Agree != 0 || s.Disagree != 0 || s.Live != 1 {
+		t.Fatalf("statusz sessions = %+v, want 1 live and no accuracy counts without MeasureSessionPrediction", s)
+	}
+}
+
+func TestSession_StatuszCountsPredictionAccuracyForHeaderCalls(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	base, p, _ := newSessionProxy(t, tollgate.Options{MeasureSessionPrediction: true})
 	admin := adminServer(t, p)
 	for step := 1; step <= 6; step++ {
 		_ = readAll(t, post(t, base, msgsPath, agentStep(t, step), via(up, "x-session-id", "run-1")))

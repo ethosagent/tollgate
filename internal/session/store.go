@@ -16,6 +16,11 @@ type Config struct {
 	Max          int           // live sessions kept (LRU beyond); default 100000
 	Shards       int           // lock shards; default 16 (1 gives an exact global LRU)
 	ClosedBuffer int           // capacity of the Closed channel; default 1024
+	// MeasurePrediction turns on the accuracy harness: header calls are
+	// also predicted, and agreement is counted (Stats.Agree, Disagree). It
+	// costs a second hash and a second store per header call, so it is off
+	// unless a host is evaluating the predictor.
+	MeasurePrediction bool
 }
 
 func (c Config) withDefaults() Config {
@@ -26,7 +31,7 @@ func (c Config) withDefaults() Config {
 		c.Max = 100_000
 	}
 	if c.Shards <= 0 {
-		c.Shards = 16
+		c.Shards = defaultShards(c.Max)
 	}
 	if c.ClosedBuffer <= 0 {
 		c.ClosedBuffer = 1024
@@ -35,14 +40,17 @@ func (c Config) withDefaults() Config {
 }
 
 // Stats are the Strategy's counters since it was created.
+// Its JSON form is the sessions section of /statusz.
 type Stats struct {
-	Live          int   // sessions currently live
-	Expired       int64 // closed by the TTL sweeper
-	Evicted       int64 // closed early because the store was full (LRU)
-	Replaced      int64 // predicted runs ended by a new run with the same prefix
-	ClosedDropped int64 // closed sessions not emitted because Closed was full
-	Agree         int64 // header calls the predictor attributed the same way
-	Disagree      int64 // header calls the predictor attributed differently
+	Live          int   `json:"live"`           // sessions currently live
+	Expired       int64 `json:"expired"`        // closed by the TTL sweeper
+	Evicted       int64 `json:"evicted"`        // closed early because the store was full (LRU)
+	Replaced      int64 `json:"replaced"`       // predicted runs ended by a new run with the same prefix
+	ClosedDropped int64 `json:"closed_dropped"` // closed sessions not emitted because Closed was full
+	// Agree and Disagree count header calls the predictor also attributed:
+	// the same way as the header, or differently (MeasurePrediction only).
+	Agree    int64 `json:"predict_agree"`
+	Disagree int64 `json:"predict_disagree"`
 }
 
 // live is a session in the store. count is the turns of its last call, used
@@ -65,8 +73,8 @@ type shadow struct {
 type Strategy struct {
 	cfg    Config
 	live   *cache[live]
-	shadow *cache[shadow]
-	seq    atomic.Uint64 // ids for predicted sessions; seeded from the start time
+	shadow *cache[shadow] // nil unless Config.MeasurePrediction
+	seq    atomic.Uint64  // ids for predicted sessions; seeded from the start time
 	out    chan model.Session
 
 	expired, evicted, replaced, dropped, agree, disagree atomic.Int64
@@ -74,13 +82,16 @@ type Strategy struct {
 	mu     sync.Mutex // guards closed, timer and sends on out
 	closed bool
 	timer  *time.Timer
+	armed  atomic.Bool // timer != nil; read without mu by arm's fast path
 }
 
 // New returns a Strategy. Call Close when done.
 func New(cfg Config) *Strategy {
 	cfg = cfg.withDefaults()
-	s := &Strategy{cfg: cfg, out: make(chan model.Session, cfg.ClosedBuffer),
-		live: newCache[live](cfg.Max, cfg.Shards), shadow: newCache[shadow](cfg.Max, cfg.Shards)}
+	s := &Strategy{cfg: cfg, out: make(chan model.Session, cfg.ClosedBuffer), live: newCache[live](cfg.Max, cfg.Shards)}
+	if cfg.MeasurePrediction {
+		s.shadow = newCache[shadow](cfg.Max, cfg.Shards)
+	}
 	s.seq.Store(uint64(time.Now().UnixMilli()))
 	return s
 }
@@ -106,11 +117,15 @@ func (s *Strategy) Resolve(_ context.Context, t model.Tenant, c *model.Call) mod
 	var gone []model.Session
 	if id := c.SessionHeader; validHeaderID(id) {
 		sess, gone = s.fromHeader(t.ID, id, now)
-		s.observe(t.ID, id, sess.Calls, c.Messages, now)
+		if s.shadow != nil {
+			s.observe(t.ID, id, sess.Calls, c.Messages, now)
+		}
 	} else {
 		sess, gone = s.predict(t.ID, c.Messages, now)
 	}
-	s.emit(gone, &s.evicted)
+	if len(gone) > 0 {
+		s.emit(gone, &s.evicted)
+	}
 	s.arm()
 	return sess
 }
@@ -157,6 +172,11 @@ func (s *Strategy) predict(tenant string, msgs []model.Message, now time.Time) (
 	gone = sessionsOf(sh.put(key, v, now, s.live.perShard))
 	return v.sess, gone
 }
+
+// defaultShards picks the lock shards for a store of max sessions. The cap
+// is per shard, so a skewed key distribution evicts early when shards are
+// small: a small store is one exact LRU, a large one spreads its locks.
+func defaultShards(maxSessions int) int { return min(16, max(1, maxSessions/1024)) }
 
 func sessionsOf(vs []*live) []model.Session {
 	out := make([]model.Session, len(vs))

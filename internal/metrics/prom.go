@@ -17,13 +17,22 @@ type HookCounts struct {
 	UsageNotRead        int64 // stream:false responses over Limits.MaxResponseCopy (or encoded): no usage
 }
 
+// SessionCounts are the default SessionStrategy's counters.
+type SessionCounts struct {
+	Live                       int64
+	Expired, Evicted, Replaced int64 // sessions closed, by reason
+	ClosedDropped              int64 // closed sessions OnSessionClosed never saw (channel full)
+}
+
 // Report is everything /metrics exposes. Queue is nil when no metric sink
-// is configured; the sink families are then omitted.
+// is configured, Sessions when a host strategy replaced the default; their
+// families are then omitted.
 type Report struct {
 	Snapshot Snapshot
 	InFlight int64
 	Queue    *Stats
 	Hooks    HookCounts
+	Sessions *SessionCounts
 }
 
 // WriteProm writes r in the Prometheus text exposition format (0.0.4) using
@@ -57,6 +66,14 @@ func WriteProm(w io.Writer, r Report) error {
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UsageNotRead), "reason", "usage_not_read")
 	if r.Queue != nil {
 		p.queue(*r.Queue)
+	}
+	if s := r.Sessions; s != nil {
+		p.single("tollgate_sessions_live", "gauge", "Sessions currently live.", s.Live)
+		p.family("tollgate_sessions_closed_total", "counter", "Sessions closed, by reason.")
+		p.sample("tollgate_sessions_closed_total", num(s.Expired), "reason", "expired")
+		p.sample("tollgate_sessions_closed_total", num(s.Evicted), "reason", "evicted")
+		p.sample("tollgate_sessions_closed_total", num(s.Replaced), "reason", "replaced")
+		p.single("tollgate_sessions_closed_dropped_total", "counter", "Closed sessions not delivered to OnSessionClosed.", s.ClosedDropped)
 	}
 	if p.err != nil {
 		return p.err

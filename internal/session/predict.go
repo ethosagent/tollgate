@@ -3,6 +3,8 @@ package session
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"hash"
+	"sync"
 
 	"github.com/ethosagent/tollgate/internal/model"
 )
@@ -33,21 +35,43 @@ func validHeaderID(id string) bool {
 // agent run hashes the same.
 func prefixHash(tenant string, msgs []model.Message) string {
 	h := sha256.New()
-	h.Write([]byte(tenant))
+	bp := hashBufs.Get().(*[]byte)
+	defer hashBufs.Put(bp)
+	w := chunkWriter{h: h, buf: *bp}
+	w.write(tenant)
 	for _, m := range msgs {
 		if m.Role == model.RoleSystem {
-			h.Write([]byte{0})
-			h.Write([]byte(m.Text))
+			w.write("\x00")
+			w.write(m.Text)
 		}
 	}
-	h.Write([]byte{0, 1})
+	w.write("\x00\x01")
 	for _, m := range msgs {
 		if m.Role == model.RoleUser {
-			h.Write([]byte(m.Text))
+			w.write(m.Text)
 			break
 		}
 	}
 	return hex.EncodeToString(h.Sum(nil)[:16])
+}
+
+// hashBufs are the copy buffers chunkWriter feeds the digest through: the
+// SHA-256 digest takes only []byte, and converting a prompt of tens of KB
+// would allocate a copy of it on every call.
+var hashBufs = sync.Pool{New: func() any { b := make([]byte, 4096); return &b }}
+
+// chunkWriter writes strings to a hash through a reused buffer.
+type chunkWriter struct {
+	h   hash.Hash
+	buf []byte
+}
+
+func (w chunkWriter) write(s string) {
+	for len(s) > 0 {
+		n := copy(w.buf, s)
+		w.h.Write(w.buf[:n]) // a hash.Hash never returns an error
+		s = s[n:]
+	}
 }
 
 // turns counts the conversation's turns: messages, with a run of consecutive

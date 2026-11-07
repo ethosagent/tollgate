@@ -35,6 +35,13 @@ type Options struct {
 	Logger     *slog.Logger // default: discards everything
 	Limits     Limits
 	Headers    HeaderNames
+	// MeasureSessionPrediction turns on the default SessionStrategy's
+	// accuracy harness: a call that carries a session header is also
+	// predicted, and /statusz counts whether the prediction agreed
+	// (sessions.predict_agree / predict_disagree). It costs a second hash
+	// and session store per header call, so it is for evaluating the
+	// predictor, not for production. Ignored with a host strategy.
+	MeasureSessionPrediction bool
 	// DisablePrivacyMode turns privacy mode off. Privacy mode (on by default)
 	// keeps transcripts, reasoning, tool payloads and raw bytes out of logs.
 	DisablePrivacyMode bool

@@ -117,7 +117,8 @@ func testReport() Report {
 		r.Observe(m)
 	}
 	return Report{Snapshot: r.Snapshot(), InFlight: 2, Queue: &Stats{Depth: 5, Dropped: 9, SinkErrors: 4, Written: 100, Ready: false},
-		Hooks: HookCounts{UnbufferedResponses: 6, DroppedEvents: 8}}
+		Hooks:    HookCounts{UnbufferedResponses: 6, DroppedEvents: 8},
+		Sessions: &SessionCounts{Live: 11, Expired: 12, Evicted: 13, Replaced: 14, ClosedDropped: 15}}
 }
 
 func TestWriteProm_ParsesAndCarriesEveryFamily(t *testing.T) {
@@ -144,6 +145,11 @@ func TestWriteProm_ParsesAndCarriesEveryFamily(t *testing.T) {
 		{"tollgate_hook_skips_total", []string{"reason", "unbuffered_response"}, 6},
 		{"tollgate_hook_skips_total", []string{"reason", "dropped_event"}, 8},
 		{"tollgate_call_duration_seconds_count", nil, 3},
+		{"tollgate_sessions_live", nil, 11},
+		{"tollgate_sessions_closed_total", []string{"reason", "expired"}, 12},
+		{"tollgate_sessions_closed_total", []string{"reason", "evicted"}, 13},
+		{"tollgate_sessions_closed_total", []string{"reason", "replaced"}, 14},
+		{"tollgate_sessions_closed_dropped_total", nil, 15},
 	} {
 		if got, ok := e.value(c.name, c.kv...); !ok || got != c.want {
 			t.Errorf("%s%v = %v (found %v), want %v", c.name, c.kv, got, ok, c.want)
@@ -193,6 +199,9 @@ func TestWriteProm_WithoutQueueOmitsSinkFamilies(t *testing.T) {
 	e := parseExposition(t, b.String())
 	if _, ok := e.value("tollgate_metrics_dropped_total"); ok {
 		t.Fatal("sink families present with no sink configured")
+	}
+	if _, ok := e.value("tollgate_sessions_live"); ok {
+		t.Fatal("session families present with a host strategy (no session counts)")
 	}
 	if _, ok := e.value("tollgate_calls_in_flight"); !ok {
 		t.Fatal("in-flight gauge missing")

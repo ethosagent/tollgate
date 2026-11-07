@@ -110,7 +110,7 @@ func TestResolve_PredictionIsPartitionedByTenant(t *testing.T) {
 }
 
 func TestStats_PredictionAccuracyWhenHeaderPresent(t *testing.T) {
-	s := newStrategy(t, Config{})
+	s := newStrategy(t, Config{MeasurePrediction: true})
 	run := agentRun(3)
 	for _, msgs := range run {
 		resolve(s, "acme", "run-1", msgs...)
@@ -123,6 +123,23 @@ func TestStats_PredictionAccuracyWhenHeaderPresent(t *testing.T) {
 	resolve(s, "acme", "run-1", sys("S"), user("U2")) // a split: same session, unrelated prefix
 	if st := s.Stats(); st.Agree != 4 || st.Disagree != 2 {
 		t.Fatalf("agree/disagree = %d/%d, want 4/2", st.Agree, st.Disagree)
+	}
+}
+
+func TestStats_PredictionIsNotMeasuredByDefault(t *testing.T) {
+	s := newStrategy(t, Config{})
+	resolve(s, "acme", "run-1", sys("S"), user("U"))
+	resolve(s, "acme", "run-2", sys("S"), user("U"))
+	if st := s.Stats(); st.Agree != 0 || st.Disagree != 0 || s.shadow != nil {
+		t.Fatalf("stats = %+v, shadow store = %v; want no accuracy harness unless MeasurePrediction", st, s.shadow != nil)
+	}
+}
+
+func TestDefaultShards_SmallStoresAreOneExactLRU(t *testing.T) {
+	for _, tt := range []struct{ max, want int }{{1, 1}, {100, 1}, {1023, 1}, {4096, 4}, {100_000, 16}} {
+		if got := defaultShards(tt.max); got != tt.want {
+			t.Errorf("defaultShards(%d) = %d, want %d", tt.max, got, tt.want)
+		}
 	}
 }
 
