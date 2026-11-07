@@ -15,6 +15,7 @@ of nine interfaces. The library is the product; `cmd/tollgated` is a wrapper.
 Design doc and milestone plans live in `plan/` (git-ignored, local only);
 `plan/000-roadmap.md` is the index. The constitution is
 [`ARCHITECTURE.md`](ARCHITECTURE.md). Decisions are in [`docs/decisions/`](docs/decisions/README.md).
+Measured overhead and the bench method: [`docs/performance.md`](docs/performance.md).
 
 ## Golden path
 

@@ -82,8 +82,10 @@ request ─► Auth ─► Admission ─► ProviderResolver ─► limits/norma
 ```
 
 - The tee (`internal/forward`) writes and flushes each upstream chunk to the
-  client **before** handing a copy to the parser. Parsed events go to a
-  bounded channel consumed by OnEvent hooks in another goroutine.
+  client **before** handing a copy to the parser. Frames go to a bounded
+  frame queue (a ring capped in frames and in bytes, §7) consumed by OnEvent
+  hooks in another goroutine. Relay reads start in a pooled 4 KiB buffer
+  and move to 32 KiB once a read fills it (bulk bodies).
 - Admission fires right after Auth so a rejected tenant costs nothing.
 - Finalizers hold only the terminal region (seam 8 below); everything
   before it is written and flushed as it arrives.
@@ -144,11 +146,11 @@ new optional interface that the core type-asserts, so old plugins compile.
 | Admission deadline, queue wait included | 30 s (`AdmissionDeadline`); none if it declares `InlineSafe` |
 | Finalizer budget / recovery ceiling | 2 per finalizer / 10 per call |
 | Finalizer Decide deadline: each / all of a call (`FinalizerDeadline`, `FinalizerCallDeadline`) | 200 ms / 1 s |
-| Event buffer / metric queue | 1024 / 10 000; overflow drops + counts |
+| Event buffer / metric queue | 1024 frames and 4 MiB / 10 000; overflow drops + counts |
 | Metric batch / flush interval | 500 / 1 s (`MetricBatch`, `MetricFlushInterval`) |
 | Sink write timeout / failures before not ready | 10 s / 3 (`MetricWriteTimeout`, `MetricFailAfter`) |
 | Session TTL / max live sessions | 5 min / 100 000 (LRU) |
-| Transport pool per host | 100 conns, 20 idle, 30 s idle expiry, HTTP/2 |
+| Transport pool per host | 100 conns, idle = `MaxConnsPerHost` (100), 30 s idle expiry, HTTP/2 |
 
 Header names (`HeaderNames`) are options, not constants. Defaults:
 `x-proxy-key`, `x-session-id`, `x-upstream-url`. tollgate strips its own

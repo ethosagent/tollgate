@@ -14,8 +14,9 @@ a copy and hand events to hooks asynchronously.
 ## Decision
 
 (b). Each upstream chunk is written to the client and flushed before a copy is
-parsed. Parsed events go to a bounded channel (`Limits.EventBuffer`) consumed
-in another goroutine; on overflow the event is dropped and counted. Only the
+parsed. Parsed events go to a bounded queue (`Limits.EventBuffer`; see the
+amendment) consumed in another goroutine; on overflow the event is dropped
+and counted. Only the
 terminal event may be held, and only when a Finalizer is registered.
 
 ## Consequences
@@ -24,3 +25,10 @@ terminal event may be held, and only when a Finalizer is registered.
   a Finalizer or a dedicated future seam (new ADR).
 - Under overload, hooks may miss events; they must tolerate gaps.
 - Enforced by tests in `internal/forward` (the review lens `STR-*` until then).
+- Amended 2026-11-08 (perf-v1): the "bounded channel" is now
+  `forward.FrameQueue`, a mutex-guarded ring bounded twice: `EventBuffer`
+  frames and `EventBuffer` × 4 KiB bytes (never below `MaxFrameBytes`). It
+  grows with the backlog, not the cap. Overflow still drops and counts; the
+  next delivered frame carries the gap and the queue's end carries the
+  drops after the last frame, so consumers learn of gaps. The tee never
+  waits on it longer than one push or pop.
