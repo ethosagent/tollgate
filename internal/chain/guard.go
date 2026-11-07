@@ -1,6 +1,7 @@
 package chain
 
 import (
+	"context"
 	"errors"
 	"net/http"
 )
@@ -15,18 +16,18 @@ type panicError struct{}
 func (panicError) Error() string   { return "chain: extension panicked" }
 func (panicError) HTTPStatus() int { return http.StatusInternalServerError }
 
-// Guard runs fn and turns a panic into ErrPanic with the zero T, so a broken
+// Guard runs fn(ctx) and turns a panic into ErrPanic with the zero T, so a broken
 // extension degrades to an error answer instead of a dropped connection
 // (non-negotiable 2). It adds no deadline: the seam's context carries one.
 // Milestone 005 builds the hook guard (recover plus Limits deadline) on it.
-func Guard[T any](fn func() (T, error)) (v T, err error) {
+func Guard[T any](ctx context.Context, fn func(context.Context) (T, error)) (v T, err error) {
 	defer func() {
 		if recover() != nil {
 			var zero T
 			v, err = zero, ErrPanic
 		}
 	}()
-	return fn()
+	return fn(ctx)
 }
 
 // IsPanic reports whether err came from a recovered panic.

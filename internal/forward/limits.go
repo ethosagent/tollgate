@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"sync"
 	"time"
 )
 
@@ -23,126 +22,80 @@ type StreamLimits struct {
 	MaxCall time.Duration
 }
 
-func (l StreamLimits) none() bool { return l == StreamLimits{} }
-
-// watchdog enforces StreamLimits for one call. When a limit fires it cancels
-// the call's context with errLimit and closes the upstream body, which
-// unblocks a read stuck on a silent upstream. It starts no goroutine of its
-// own: timers run their callback on the runtime's. A nil *watchdog is valid
-// and does nothing.
-type watchdog struct {
-	cancel context.CancelCauseFunc
-	idleD  time.Duration
-
-	mu    sync.Mutex
-	body  io.Closer
-	first *time.Timer
-	idle  *time.Timer
-	max   *time.Timer
-	fired bool
-	done  bool
+// withLimits derives the call context: MaxCall is a deadline whose cause is
+// errLimit, and cancel ends the call with a cause (errLimit from the idle
+// clock, nil on return). The caller must call cancel.
+func withLimits(ctx context.Context, l StreamLimits) (context.Context, context.CancelCauseFunc) {
+	stop := func() {}
+	if l.MaxCall > 0 {
+		ctx, stop = context.WithTimeoutCause(ctx, l.MaxCall, errLimit)
+	}
+	ctx, cancel := context.WithCancelCause(ctx)
+	return ctx, func(cause error) { cancel(cause); stop() }
 }
 
-// startWatchdog arms the first-byte and max-call timers. It returns nil when
-// l sets no limit.
-func startWatchdog(l StreamLimits, cancel context.CancelCauseFunc) *watchdog {
-	if l.none() {
+// idleClock is the one re-armable timer behind FirstByte and Idle. It is
+// armed with FirstByte at the start of the call (or with Idle once headers
+// arrive when FirstByte is zero) and re-armed with Idle on every read that
+// returns bytes. When it fires it cancels the call with errLimit; closing
+// the body is left to the context (see Forward). Only the call's goroutine
+// touches it, so it needs no lock; time.Timer is safe against its own
+// callback. A nil *idleClock is valid and does nothing.
+type idleClock struct {
+	t     *time.Timer
+	idle  time.Duration
+	fire  func()
+	first bool // no body byte seen yet
+}
+
+// startClock arms the first-byte limit. It returns nil when l sets neither
+// FirstByte nor Idle.
+func startClock(l StreamLimits, cancel context.CancelCauseFunc) *idleClock {
+	if l.FirstByte <= 0 && l.Idle <= 0 {
 		return nil
 	}
-	w := &watchdog{cancel: cancel, idleD: l.Idle}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if l.MaxCall > 0 {
-		w.max = time.AfterFunc(l.MaxCall, w.fire)
-	}
+	c := &idleClock{idle: l.Idle, fire: func() { cancel(errLimit) }, first: true}
 	if l.FirstByte > 0 {
-		w.first = time.AfterFunc(l.FirstByte, w.fire)
+		c.t = time.AfterFunc(l.FirstByte, c.fire)
 	}
-	return w
+	return c
 }
 
-// attach gives the watchdog the body to close on a timeout. With no
-// first-byte limit the idle clock starts here.
-func (w *watchdog) attach(body io.Closer) {
-	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	w.body = body
-	fired := w.fired
-	if w.first == nil && w.idleD > 0 && !w.done {
-		w.idle = time.AfterFunc(w.idleD, w.fire)
-	}
-	w.mu.Unlock()
-	if fired {
-		_ = body.Close() // a limit fired while the round trip was finishing
+// headers starts the idle clock when there is no first-byte limit.
+func (c *idleClock) headers() {
+	if c != nil && c.t == nil {
+		c.t = time.AfterFunc(c.idle, c.fire)
 	}
 }
 
-// touch records body bytes: the first-byte timer stops and the idle timer
+// touch records body bytes: the first-byte limit is over and the idle clock
 // restarts.
-func (w *watchdog) touch() {
-	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	if w.done {
-		return
-	}
-	if w.first != nil {
-		w.first.Stop()
-		w.first = nil
-	}
+func (c *idleClock) touch() {
 	switch {
-	case w.idleD <= 0:
-	case w.idle == nil:
-		w.idle = time.AfterFunc(w.idleD, w.fire)
-	default:
-		w.idle.Reset(w.idleD)
+	case c.idle > 0:
+		c.t.Reset(c.idle)
+	case c.first:
+		c.t.Stop()
+	}
+	c.first = false
+}
+
+func (c *idleClock) stop() {
+	if c != nil && c.t != nil {
+		c.t.Stop()
 	}
 }
 
-func (w *watchdog) fire() {
-	w.mu.Lock()
-	if w.done || w.fired {
-		w.mu.Unlock()
-		return
-	}
-	w.fired = true
-	body := w.body
-	w.mu.Unlock()
-	w.cancel(errLimit)
-	if body != nil {
-		_ = body.Close()
-	}
-}
-
-// stop disarms every timer. A callback already running sees done and exits.
-func (w *watchdog) stop() {
-	if w == nil {
-		return
-	}
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.done = true
-	for _, t := range []*time.Timer{w.first, w.idle, w.max} {
-		if t != nil {
-			t.Stop()
-		}
-	}
-}
-
-// touchReader tells the watchdog about every read that returns bytes.
+// touchReader tells the clock about every read that returns bytes.
 type touchReader struct {
-	r  io.Reader
-	wd *watchdog
+	r io.Reader
+	c *idleClock
 }
 
-func (t touchReader) Read(p []byte) (int, error) {
+func (t *touchReader) Read(p []byte) (int, error) {
 	n, err := t.r.Read(p)
 	if n > 0 {
-		t.wd.touch()
+		t.c.touch()
 	}
 	return n, err
 }

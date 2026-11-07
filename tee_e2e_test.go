@@ -49,10 +49,10 @@ func TestTee_ByteExactWithAndWithoutConsumerOverFixtures(t *testing.T) {
 				t.Fatalf("client bytes differ from the fixture (finish %s)", res.Finish)
 			}
 			frames := 0
-			for range q.Frames() { // closed by Forward
+			for _, _, ok := q.Next(); ok; _, _, ok = q.Next() { // finished by Forward
 				frames++
 			}
-			if frames == 0 || q.Dropped() != 0 {
+			if frames == 0 || q.Dropped() != 0 || q.End().Finish != model.FinishOK {
 				t.Fatalf("frames=%d dropped=%d", frames, q.Dropped())
 			}
 		})

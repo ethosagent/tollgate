@@ -38,14 +38,18 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 		shape: normalise.ShapeForWire(resolve.WireForPath(r.URL.Path))}
 	defer p.logCall(r.Context(), o)
 
-	tenant, err := chain.Guard(func() (Tenant, error) { return p.opts.Auth.Authenticate(r.Context(), r) })
+	tenant, err := chain.Guard(r.Context(), func(ctx context.Context) (Tenant, error) {
+		return p.opts.Auth.Authenticate(ctx, r)
+	})
 	if err != nil {
 		p.fail(w, r, o, "auth", err, http.StatusUnauthorized)
 		return
 	}
 	o.tenant = tenant.ID
 	call := &Call{ID: o.callID, Tenant: tenant, Path: r.URL.Path, Header: p.reqHeaders.Filter(r.Header)}
-	release, err := chain.Guard(func() (func(), error) { return p.opts.Admission.Acquire(r.Context(), tenant, call) })
+	release, err := chain.Guard(r.Context(), func(ctx context.Context) (func(), error) {
+		return p.opts.Admission.Acquire(ctx, tenant, call)
+	})
 	if err != nil {
 		if !chain.IsPanic(err) {
 			w.Header().Set("Retry-After", strconv.Itoa(model.RetryAfterSeconds(err)))
@@ -56,7 +60,9 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 	if release != nil {
 		defer release()
 	}
-	res, err := chain.Guard(func() (resolved, error) { return p.resolve(r, tenant) })
+	res, err := chain.Guard(r.Context(), func(ctx context.Context) (resolved, error) {
+		return p.resolve(ctx, r, tenant)
+	})
 	if err != nil {
 		p.fail(w, r, o, "resolver", err, http.StatusNotFound)
 		return
@@ -81,8 +87,8 @@ type resolved struct {
 	target *url.URL
 }
 
-func (p *Proxy) resolve(r *http.Request, t Tenant) (resolved, error) {
-	prov, rest, err := p.opts.Providers.Resolve(r.Context(), t, r)
+func (p *Proxy) resolve(ctx context.Context, r *http.Request, t Tenant) (resolved, error) {
+	prov, rest, err := p.opts.Providers.Resolve(ctx, t, r)
 	return resolved{prov: prov, rest: rest}, err
 }
 

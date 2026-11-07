@@ -11,6 +11,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/ethosagent/tollgate/internal/model"
 )
 
 // reads splits b into reads of n bytes.
@@ -24,10 +26,11 @@ func reads(b []byte, n int) *chunkReader {
 	return r
 }
 
+// drain ends q as a clean call would and returns its frames.
 func drain(q *FrameQueue) []string {
-	q.close()
+	q.finish(model.FinishOK)
 	var out []string
-	for f := range q.Frames() {
+	for f, _, ok := q.Next(); ok; f, _, ok = q.Next() {
 		out = append(out, string(f))
 	}
 	return out
@@ -121,7 +124,7 @@ func TestTee_StuckConsumerNeverDelaysClient(t *testing.T) {
 		q := NewFrameQueue(buffer)
 		release := make(chan struct{})
 		go func() { // takes one frame, then never reads again
-			<-q.Frames()
+			q.Next()
 			<-release
 		}()
 		w := &recWriter{}
@@ -153,13 +156,7 @@ func TestTee_CountsOversizedFramesAsDropped(t *testing.T) {
 	}
 }
 
-func TestFrameQueue_CloseIsIdempotentAndNilSafe(t *testing.T) {
+func TestFrameQueue_FinishIsNilSafe(_ *testing.T) {
 	var nilQ *FrameQueue
-	nilQ.close()
-	q := NewFrameQueue(1)
-	q.close()
-	q.close()
-	if q.Dropped() != 0 {
-		t.Fatal("dropped on empty queue")
-	}
+	nilQ.finish(model.FinishOK)
 }

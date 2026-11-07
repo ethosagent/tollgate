@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
-	"strings"
-
-	"io"
 
 	"github.com/ethosagent/tollgate/internal/model"
 	"github.com/ethosagent/tollgate/internal/normalise"
@@ -58,7 +57,8 @@ type Request struct {
 	// stream that breaks after it started.
 	Shape normalise.ErrorShape
 	// Frames, if not nil, receives a copy of every SSE frame after the
-	// client has been sent the bytes. Forward closes it when the call ends.
+	// client has been sent the bytes. Forward closes it when the call ends
+	// and records the ending in Frames.End.
 	Frames *FrameQueue
 }
 
@@ -79,12 +79,12 @@ type Result struct {
 // client that has gone away gets no error, only FinishClientCancel. A limit
 // that fires mid-stream, or an upstream that drops, ends an SSE response with
 // a provider-shaped error event and Finish timeout or upstream_error.
-func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, req Request) (Result, error) {
-	defer req.Frames.close()
-	ctx, cancel := context.WithCancelCause(ctx)
+func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, req Request) (res Result, err error) {
+	defer func() { req.Frames.finish(res.Finish) }()
+	ctx, cancel := withLimits(ctx, req.Limits)
 	defer cancel(nil)
-	wd := startWatchdog(req.Limits, cancel)
-	defer wd.stop()
+	clock := startClock(req.Limits, cancel)
+	defer clock.stop()
 	// req.Target passed Target, the one check every upstream URL goes
 	// through, so the caller cannot steer this request (ADR 0007).
 	out, err := http.NewRequestWithContext(ctx, req.Method, req.Target.String(), bytes.NewReader(req.Body))
@@ -100,8 +100,15 @@ func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, r
 		return failedBeforeBody(ctx, err)
 	}
 	defer resp.Body.Close()
-	wd.attach(resp.Body)
-	return relayResponse(ctx, w, resp, req, wd)
+	// Whatever ends the call (a limit, the client leaving) closes the body,
+	// which unblocks a read stuck on a silent upstream.
+	defer context.AfterFunc(ctx, func() { _ = resp.Body.Close() })()
+	clock.headers()
+	var src io.Reader = resp.Body
+	if clock != nil {
+		src = &touchReader{resp.Body, clock}
+	}
+	return relayResponse(ctx, w, resp, src, req)
 }
 
 // failedBeforeBody classifies an error that happened before any byte went to
@@ -119,7 +126,7 @@ func failedBeforeBody(ctx context.Context, err error) (Result, error) {
 
 var responseHeaders = NewHeaderFilter()
 
-func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, req Request, wd *watchdog) (Result, error) {
+func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Response, src io.Reader, req Request) (Result, error) {
 	res := Result{Status: resp.StatusCode, Finish: model.FinishOK}
 	if resp.StatusCode >= http.StatusBadRequest {
 		res.Finish = model.FinishUpstreamError
@@ -130,47 +137,36 @@ func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Respon
 		responseHeaders.CopyTo(w.Header(), resp.Header)
 		w.WriteHeader(resp.StatusCode)
 	}
-	var src io.Reader = resp.Body
-	if wd != nil {
-		src = touchReader{resp.Body, wd}
-	}
 	_, err := Tee(w, src, req.Frames, begin)
-	if err == nil {
-		if !sent { // an empty body still carries a status and headers
-			begin()
-		}
-		return res, nil
-	}
-	f := finishFor(ctx, err)
-	if !sent {
+	switch {
+	case err == nil && !sent: // an empty body still carries a status and headers
+		begin()
+	case err != nil && !sent:
 		return failedBeforeBody(ctx, err)
-	}
-	res.Finish = f
-	if f != model.FinishClientCancel {
-		res.Cut = !endSSEWithError(w, resp.Header, req.Shape, f)
+	case err != nil:
+		res.Finish = finishFor(ctx, err)
+		if res.Finish != model.FinishClientCancel {
+			res.Cut = !terminate(w, resp.Header, req.Shape, res.Finish)
+		}
 	}
 	return res, nil
 }
 
-// endSSEWithError appends a provider-shaped error event to a broken SSE
-// stream so the client sees why it ended. It reports false, doing nothing,
-// for a body that is not SSE.
-func endSSEWithError(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape, f model.Finish) bool {
-	if !isSSE(h) {
+// terminate ends a response that broke after its first byte. An event
+// stream gets a provider-shaped error event (status from
+// normalise.FinishStatus, fixed message) and a clean end; terminate then
+// reports true. Any other body cannot carry an in-band error, so it reports
+// false and the caller aborts the connection. The choice is made once per
+// response from its media type: the wire alone cannot tell, because a
+// streaming wire still answers errors and stream:false calls with JSON.
+func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape, f model.Finish) bool {
+	if mt, _, err := mime.ParseMediaType(h.Get("Content-Type")); err != nil || mt != "text/event-stream" {
 		return false
 	}
-	status, msg := http.StatusBadGateway, "upstream connection lost"
-	if f == model.FinishTimeout {
-		status, msg = http.StatusGatewayTimeout, "stream timed out"
-	}
-	ev := normalise.AppendErrorEvent(nil, shape, status, msg)
+	status := normalise.FinishStatus(f)
+	ev := normalise.AppendErrorEvent(nil, shape, status, normalise.StatusMessage(status))
 	_, _ = writeFlush(w, http.NewResponseController(w), ev) // the client may be gone; the call is ending anyway
 	return true
-}
-
-func isSSE(h http.Header) bool {
-	ct := h.Get("Content-Type")
-	return len(ct) >= len("text/event-stream") && strings.EqualFold(ct[:len("text/event-stream")], "text/event-stream")
 }
 
 // finishFor classifies a failed round trip or relay. ctx is the call's

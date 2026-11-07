@@ -114,6 +114,9 @@ func TestProxy_UpstreamFailures(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			base := newProxyServer(t, tt.opts)
 			resp := post(t, base, "/anthropic/v1/messages", []byte(`{}`), tt.hdr)
+			if resp.StatusCode != tt.want {
+				t.Fatalf("status=%d, want %d", resp.StatusCode, tt.want)
+			}
 			body := errorBody(t, resp)
 			if resp.StatusCode != tt.want || body["type"] != "error" {
 				t.Fatalf("status=%d body=%v", resp.StatusCode, body)

@@ -139,6 +139,13 @@ func TestForward_StreamLimits(t *testing.T) {
 		{name: "upstream drop of a non-SSE body cuts the connection", contentType: typeJSON,
 			body:       func(_ context.Context, pw *io.PipeWriter) { send(pw, "{"); pw.CloseWithError(errors.New("reset")) },
 			wantFinish: model.FinishUpstreamError, wantCut: true, wantBody: "{"},
+		{name: "first byte limit alone stops once bytes flow", limits: StreamLimits{FirstByte: 3 * time.Second},
+			body: func(_ context.Context, pw *io.PipeWriter) {
+				send(pw, frameA)
+				time.Sleep(10 * time.Second)
+				send(pw, frameA)
+			},
+			wantFinish: model.FinishOK, wantBody: frameA + frameA, wantAfter: 10 * time.Second},
 		{name: "no limits means no timer", body: sleepThen(24*time.Hour, frameA), wantFinish: model.FinishOK, wantBody: frameA},
 	}
 	for _, tt := range tests {
