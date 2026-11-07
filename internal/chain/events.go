@@ -15,9 +15,10 @@ type Events struct {
 	dead []bool // hooks that panicked on this call: skipped, so one log line
 }
 
-// Events returns the delivery state for one call.
+// Events returns the delivery state for one call. Only hooks that override
+// OnEvent are called.
 func (c *Chain) Events(call *model.Call) *Events {
-	return &Events{c: c, call: call, dead: make([]bool, len(c.hooks))}
+	return &Events{c: c, call: call, dead: make([]bool, len(c.by[StageEvent]))}
 }
 
 // Deliver gives e to each hook. A hook that panics is logged once and skipped
@@ -29,7 +30,7 @@ func (d *Events) Deliver(ctx context.Context, e model.Event) bool {
 	if ctx.Err() != nil {
 		return false
 	}
-	for i, h := range d.c.hooks {
+	for i, h := range d.c.by[StageEvent] {
 		if !d.dead[i] && !d.one(ctx, h, e) {
 			d.dead[i] = true
 		}
@@ -38,11 +39,13 @@ func (d *Events) Deliver(ctx context.Context, e model.Event) bool {
 }
 
 // one calls a single OnEvent under recover, with no goroutine or deadline per
-// event: the consumer's ctx carries the bound.
+// event (that would cost a goroutine per event per hook): the consumer's ctx
+// carries the bound. A hook that ignores ctx can hold the consumer goroutine,
+// never the client; the caller bounds how long After waits for it.
 func (d *Events) one(ctx context.Context, h model.Hook, e model.Event) (ok bool) {
 	defer func() {
 		if recover() != nil {
-			d.c.fail(ctx, d.call, h, "on_event", ErrPanic)
+			d.c.skip(ctx, idsOf(d.call), h, StageEvent, reasonPanic)
 			ok = false
 		}
 	}()

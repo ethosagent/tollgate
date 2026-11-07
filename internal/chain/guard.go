@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 )
 
@@ -35,31 +36,62 @@ func Guard[T any](ctx context.Context, fn func(context.Context) (T, error)) (v T
 func IsPanic(err error) bool { return errors.Is(err, ErrPanic) }
 
 // ErrDeadline is returned by Within when the call did not finish in time or
-// its context ended first.
-var ErrDeadline = errors.New("chain: hook deadline exceeded")
+// its context ended first. It is a model.StatusError for 503: an Auth,
+// Admission or ProviderResolver call that runs out of time is answered 503.
+var ErrDeadline error = deadlineError{}
 
-// Within runs fn under Guard with a context that ends after d. It is the hook
-// guard: recover plus a deadline. fn runs on its own goroutine, so a hook that
-// ignores its context cannot hold the caller: Within returns ErrDeadline at the
-// deadline (or when ctx ends) and the late result is dropped. Callers hand fn
-// private copies of anything it may write.
+type deadlineError struct{}
+
+func (deadlineError) Error() string   { return "chain: extension deadline exceeded" }
+func (deadlineError) HTTPStatus() int { return http.StatusServiceUnavailable }
+
+// Within runs fn under Guard with a context that ends after d. It is the
+// extension guard: recover plus a deadline. fn runs on its own goroutine, so
+// an extension that ignores its context cannot hold the caller: Within
+// returns ErrDeadline at the deadline (or when ctx ends) and the late result
+// is dropped. A result that arrives once the deadline has passed is late too,
+// whatever fn returned. Callers hand fn private copies of anything it may write.
 func Within[T any](ctx context.Context, d time.Duration, fn func(context.Context) (T, error)) (T, error) {
+	return WithinLate(ctx, d, fn, nil)
+}
+
+// WithinLate is Within, and late (if not nil) receives, exactly once, the
+// result of a call that missed its deadline once fn returns. It is for
+// results that hold a resource, such as an Admission release func.
+func WithinLate[T any](ctx context.Context, d time.Duration, fn func(context.Context) (T, error), late func(T, error)) (T, error) {
 	ctx, cancel := context.WithTimeout(ctx, d)
 	defer cancel()
 	type result struct {
 		v   T
 		err error
 	}
-	done := make(chan result, 1) // buffered: an abandoned fn still exits
+	const pending, finished, abandoned = 0, 1, 2
+	var state atomic.Int32 // whoever moves it off pending owns the result
+	done := make(chan result, 1)
 	go func() {
 		v, err := Guard(ctx, fn)
-		done <- result{v, err}
+		if state.CompareAndSwap(pending, finished) {
+			done <- result{v, err}
+		} else if late != nil {
+			late(v, err)
+		}
 	}()
+	var r result
 	select {
-	case r := <-done:
-		return r.v, r.err
+	case r = <-done:
 	case <-ctx.Done():
+		if state.CompareAndSwap(pending, abandoned) {
+			var zero T
+			return zero, ErrDeadline
+		}
+		r = <-done // it finished as the deadline hit: the result is ours
+	}
+	if ctx.Err() != nil { // returned, but only once its time was up: late all the same
+		if late != nil {
+			late(r.v, r.err)
+		}
 		var zero T
 		return zero, ErrDeadline
 	}
+	return r.v, r.err
 }

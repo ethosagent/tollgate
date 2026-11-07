@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"testing/synctest"
+	"time"
 )
 
 func TestGuard(t *testing.T) {
@@ -35,4 +37,48 @@ func TestErrPanic_Is500(t *testing.T) {
 	if !errors.As(ErrPanic, &se) || se.HTTPStatus() != 500 || ErrPanic.Error() == "" {
 		t.Fatal("ErrPanic must be a 500 StatusError")
 	}
+}
+
+func TestErrDeadline_Is503(t *testing.T) {
+	var se interface{ HTTPStatus() int }
+	if !errors.As(ErrDeadline, &se) || se.HTTPStatus() != 503 || ErrDeadline.Error() == "" {
+		t.Fatal("ErrDeadline must be a 503 StatusError")
+	}
+}
+
+func TestWithinLate_HandsALateResultToLate(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		var got []int
+		late := func(v int, _ error) { got = append(got, v) }
+		v, err := WithinLate(context.Background(), time.Second, func(context.Context) (int, error) { return 1, nil }, late)
+		if v != 1 || err != nil {
+			t.Fatalf("in time: v=%d err=%v", v, err)
+		}
+		_, err = WithinLate(context.Background(), time.Second, func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			time.Sleep(time.Second) // ignores its deadline, then returns a resource
+			return 2, nil
+		}, late)
+		if !errors.Is(err, ErrDeadline) {
+			t.Fatalf("err = %v, want ErrDeadline", err)
+		}
+		synctest.Wait()
+		time.Sleep(time.Second)
+		synctest.Wait()
+		if len(got) != 1 || got[0] != 2 {
+			t.Fatalf("late got %v, want only the late result 2", got)
+		}
+	})
+}
+
+func TestWithin_ErrorCausedByItsOwnDeadlineIsErrDeadline(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		_, err := Within(context.Background(), time.Second, func(ctx context.Context) (int, error) {
+			<-ctx.Done()
+			return 0, ctx.Err() // honours ctx and reports it: races the select
+		})
+		if !errors.Is(err, ErrDeadline) {
+			t.Fatalf("err = %v, want ErrDeadline", err)
+		}
+	})
 }
