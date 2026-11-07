@@ -170,15 +170,22 @@ func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape,
 }
 
 // finishFor classifies a failed round trip or relay. ctx is the call's
-// context: cancelled means the client left; past its deadline means timeout.
+// context: cancelled means the client left; past its deadline, or cancelled
+// by a stream limit, means timeout. The context is read once: a limit firing
+// between two reads must not turn a timeout into a client cancel.
 func finishFor(ctx context.Context, err error) model.Finish {
+	cause := context.Cause(ctx)
+	var ctxErr error
+	if cause != nil { // done: Err is now fixed
+		ctxErr = ctx.Err()
+	}
 	var ne net.Error
 	switch {
-	case errors.Is(context.Cause(ctx), errLimit):
+	case errors.Is(cause, errLimit):
 		return model.FinishTimeout
-	case errors.Is(err, ErrClientWrite), errors.Is(ctx.Err(), context.Canceled):
+	case errors.Is(err, ErrClientWrite), errors.Is(ctxErr, context.Canceled):
 		return model.FinishClientCancel
-	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded),
+	case errors.Is(ctxErr, context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded),
 		errors.As(err, &ne) && ne.Timeout():
 		return model.FinishTimeout
 	}
