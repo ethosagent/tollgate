@@ -16,6 +16,24 @@ jobs:
   gate:
     name: gate (latest Go)
     runs-on: ubuntu-latest
+    # Postgres for ext/metrics/postgres (ADR 0011). With CI=true the integration
+    # test FAILS when TOLLGATE_TEST_PG_DSN is unset, so it can never skip silently.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tollgate
+          POSTGRES_PASSWORD: tollgate
+          POSTGRES_DB: tollgate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tollgate -d tollgate_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TOLLGATE_TEST_PG_DSN: postgres://tollgate:tollgate@127.0.0.1:5432/tollgate_test?sslmode=disable
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -24,6 +42,7 @@ jobs:
           cache-dependency-path: |
             go.sum
             tools/go.sum
+            ext/**/go.sum
       # The same script developers and the pre-push hook run. Do NOT inline steps.
       - name: scripts/run-checks.sh
         run: scripts/run-checks.sh

@@ -15,5 +15,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0007](0007-upstream-target-checked-in-the-core-for-every-resolver.md) | Upstream target checked in the core for every resolver | Accepted |
 | [0008](0008-error-to-status-contract-for-extensions.md) | Error-to-status contract for extensions | Accepted |
 | [0009](0009-extensions-declare-consumed-headers.md) | Extensions declare the request headers they consume | Accepted |
+| [0011](0011-extensions-with-third-party-dependencies-live-in-nested-modules.md) | Extensions with third-party dependencies live in nested modules | Accepted |
 
 Template: [`template.md`](template.md).

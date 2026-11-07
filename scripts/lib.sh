@@ -10,7 +10,17 @@ MAX_SKILL_DESC=250                  # SKILL.md description, characters
 # gotool runs a tool pinned in tools/go.mod (ADR 0005). CGO_ENABLED=0: every
 # pinned tool is pure Go, so a broken host C toolchain cannot break the gate.
 # Do not use it for `go test -race`, which needs cgo.
-gotool() { CGO_ENABLED=0 go tool -modfile=tools/go.mod "$@"; }
+gotool() { CGO_ENABLED=0 go tool -modfile="$REPO_ROOT/tools/go.mod" "$@"; }
+
+# REPO_ROOT is absolute so gotool also works from inside a nested module.
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# nested_modules lists the repo-relative dirs under ext/ that have their own
+# go.mod (ADR 0011: extensions with third-party deps). The root `./...` skips
+# them, so every gate that runs `go` per module loops over this list.
+nested_modules() {
+  (cd "$REPO_ROOT" && find ext -name go.mod -not -path '*/testdata/*' 2>/dev/null | sort | xargs -n1 dirname 2>/dev/null) || true
+}
 
 # list_files PATTERN... lists tracked and untracked-but-not-ignored files, so
 # .gitignore (plan/, .logs/, reports/, ...) is the only exclusion list.
