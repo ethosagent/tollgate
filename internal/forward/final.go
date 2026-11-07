@@ -1,7 +1,6 @@
 package forward
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -43,16 +42,28 @@ func finalizable(resp *http.Response) bool {
 		isEventStream(resp.Header) && resp.Header.Get("Content-Encoding") == ""
 }
 
+// Finalized is what the barrier did with one call's response.
+type Finalized struct {
+	// Usage is summed over every upstream response of the call: the
+	// original and each recovery, including a terminal region the client
+	// never received (the provider still charged for it).
+	Usage model.Usage
+	// Unheld means a terminal region outgrew MaxFrameBytes and went to the
+	// client without a Decide.
+	Unheld bool
+}
+
 // relayFinal relays resp through the barrier. It reports whether the response
 // was started. It is a function of its own so that the closure and the flag
 // it captures are heap-allocated only on this path.
-func relayFinal(ctx context.Context, w http.ResponseWriter, resp *http.Response, src io.Reader, req Request, env relayEnv) (sent bool, err error) {
+func relayFinal(ctx context.Context, w http.ResponseWriter, resp *http.Response, src io.Reader, req Request, env relayEnv) (sent bool, fin *Finalized, err error) {
 	begin := func() {
 		sent = true
 		startResponse(w, resp)
 	}
-	err = newFinalRun(ctx, env, w, req, begin).run(src)
-	return sent, err
+	r := newFinalRun(ctx, env, w, req, begin)
+	err = r.run(src)
+	return sent, &r.fin, err
 }
 
 // finalRun is one client response under the barrier.
@@ -65,6 +76,7 @@ type finalRun struct {
 	rc     *http.ResponseController
 	begin  func()
 	splice normalise.Splicer
+	fin    Finalized
 }
 
 func newFinalRun(ctx context.Context, env relayEnv, w http.ResponseWriter, req Request, begin func()) *finalRun {
@@ -72,30 +84,36 @@ func newFinalRun(ctx context.Context, env relayEnv, w http.ResponseWriter, req R
 		rc: http.NewResponseController(w), begin: begin, splice: req.Final.Term.NewSplicer()}
 }
 
-// segResult is how one upstream response was read: its held terminal region,
-// the summary of what it carried, and how reading ended.
+// segResult is how one upstream response was read: its held terminal region
+// (raw bytes and frames), the summary of what it carried, and how reading
+// ended.
 type segResult struct {
-	held []byte
-	sum  model.StreamSummary
-	err  error
+	held   []byte
+	heldFr []heldFrame
+	sum    model.StreamSummary
+	err    error
 }
 
 // run relays src, then decides on its terminal region until a decision
 // ends the response. It returns the error Tee would for the same failure.
+// The consumer (Request.Frames) gets exactly the frames the client got: a
+// discarded terminal region never, a replacement's frames instead.
 func (r *finalRun) run(src io.Reader) error {
 	cur := r.segment(src, false)
 	for cur.err == nil && len(cur.held) > 0 {
 		d := r.f.Decide(r.ctx, cur.sum)
 		switch {
 		case d.Action == model.DecisionReplace && d.Response != nil && len(d.Response.Body) > 0:
-			r.offerFrames(cur.held) // hooks still see what the upstream sent
-			return r.write(d.Response.Body)
+			if err := r.write(d.Response.Body); err != nil {
+				return err
+			}
+			r.offerAll(d.Response.Body)
+			return nil
 		case d.Action == model.DecisionRecover && len(d.Body) > 0:
 			next, ok := r.recover(d.Body)
 			if !ok || (next.err == nil && len(next.held) == 0) {
 				return r.release(cur)
 			}
-			r.offerFrames(cur.held)
 			cur = next
 		default:
 			return r.release(cur)
@@ -110,9 +128,20 @@ func (r *finalRun) release(s segResult) error {
 		if err := r.write(s.held); err != nil {
 			return err
 		}
-		r.offerFrames(s.held)
+		r.sent(s.heldFr, false)
 	}
 	return s.err
+}
+
+// sent folds frames of a terminal region the client was just sent into the
+// splicer (original stream only) and the consumer queue.
+func (r *finalRun) sent(frames []heldFrame, recovery bool) {
+	for _, f := range frames {
+		if !recovery {
+			r.splice.Sent(f.ev, f.data)
+		}
+		r.offer(f.frame)
+	}
 }
 
 // write sends p to the client and flushes; the first write starts the
@@ -157,27 +186,33 @@ func (r *finalRun) recover(body []byte) (res segResult, ok bool) {
 }
 
 // offer hands one frame the client received to the consumer, if any.
-func (r *finalRun) offer(sent []byte) {
+func (r *finalRun) offer(frame []byte) {
 	if q := r.req.Frames; q != nil {
-		q.offer(bytes.TrimRight(sent, "\r\n"))
+		q.offer(frame)
 	}
 }
 
-// offerFrames offers every frame of raw, bytes the client was sent (or, for
-// a discarded terminal, would have been).
-func (r *finalRun) offerFrames(raw []byte) {
-	for n := frameEnd(raw); n >= 0; n = frameEnd(raw) {
-		if ev, data := normalise.SplitFrame(raw[:n]); ev != "" || len(data) > 0 {
-			r.offer(raw[:n])
-		}
-		raw = raw[n:]
+// offerAll hands the consumer the frames of raw, bytes the client was sent
+// whole (a Finalizer's replacement), framed as the tee frames.
+func (r *finalRun) offerAll(raw []byte) {
+	if q := r.req.Frames; q != nil {
+		var sc Scanner
+		sc.scan(raw, q)
+		sc.finish(q)
+		q.lose(sc.takeOversized())
 	}
 }
 
 // segment reads one upstream response from src. recovery marks a recovery
-// stream, whose frames are spliced onto the response so far.
-func (r *finalRun) segment(src io.Reader, recovery bool) segResult {
+// stream, whose frames are spliced onto the response so far. The response's
+// usage is added to the call's, whatever happens to its terminal region.
+func (r *finalRun) segment(src io.Reader, recovery bool) (res segResult) {
 	s := &segState{r: r, recovery: recovery, sum: normalise.NewSummarizer(r.f.Wire)}
+	defer func() {
+		res.sum = s.sum.Summary()
+		r.fin.Usage = addUsage(r.fin.Usage, res.sum.Usage)
+		r.fin.Unheld = r.fin.Unheld || s.unheld
+	}()
 	if recovery {
 		r.splice.Begin()
 	}
@@ -196,10 +231,15 @@ func (r *finalRun) segment(src io.Reader, recovery bool) segResult {
 		if err := s.end(); err != nil {
 			return segResult{err: err}
 		}
-		res := segResult{held: s.held, sum: s.sum.Summary()}
+		res = segResult{held: s.held, heldFr: s.heldFr}
 		if !errors.Is(rerr, io.EOF) {
 			res.err = fmt.Errorf("%w: %w", ErrUpstreamRead, rerr)
 		}
 		return res
 	}
+}
+
+func addUsage(a, b model.Usage) model.Usage {
+	return model.Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens,
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens, ReasoningTokens: a.ReasoningTokens + b.ReasoningTokens}
 }

@@ -30,13 +30,38 @@ type Scanner struct {
 	pendingCR bool   // the last byte was a CR: swallow an immediately following LF
 }
 
+// frameSink receives every frame end a Scanner finds. It is how the tee
+// (FrameQueue) and the Finalizer barrier (segState) share one framer.
+type frameSink interface {
+	// frame is called at the closing blank line of every frame: f is the
+	// frame as Scan emits it, or nil when it carried no field (keep-alive
+	// comments, blank lines) or was over MaxFrameBytes; end is the offset in
+	// the current input just past the blank line's line ending, or -1 from
+	// Finish (the frame ran to the end of the stream). f is valid only
+	// during the call.
+	frame(f []byte, end int)
+}
+
+// emitFunc adapts Scan's callback to a frameSink: frames only.
+type emitFunc func([]byte)
+
+func (e emitFunc) frame(f []byte, _ int) {
+	if f != nil {
+		e(f)
+	}
+}
+
 // Scan consumes p and calls emit for every frame it completes. The frame
 // slice is valid only during the call; copy it to keep it.
-func (s *Scanner) Scan(p []byte, emit func(frame []byte)) {
+func (s *Scanner) Scan(p []byte, emit func(frame []byte)) { s.scan(p, emitFunc(emit)) }
+
+// scan is Scan for a frameSink, which also learns where each frame ends.
+func (s *Scanner) scan(p []byte, sink frameSink) {
+	shift := 0 // bytes dropped from the front of p: offsets reported to sink add it back
 	if s.pendingCR {
 		s.pendingCR = false
 		if len(p) > 0 && p[0] == '\n' {
-			p = p[1:]
+			p, shift = p[1:], 1
 		}
 	}
 	// in is where the uncopied part of the current frame starts in p. While
@@ -50,7 +75,7 @@ func (s *Scanner) Scan(p []byte, emit func(frame []byte)) {
 		}
 		end := pos + i
 		next := s.afterEOL(p, end)
-		in, inPlace = s.endLine(p, in, pos, end, next, inPlace, emit)
+		in, inPlace = s.endLine(p, line{pos, end, next}, in, inPlace, sink, shift)
 		pos = next
 	}
 	s.carry(p[in:]) // unfinished lines wait for the next read
@@ -62,14 +87,18 @@ func (s *Scanner) Scan(p []byte, emit func(frame []byte)) {
 	}
 }
 
-// endLine handles the line p[pos:end] whose ending runs to next, and returns
-// the new frame start and whether the frame is still in place.
-func (s *Scanner) endLine(p []byte, in, pos, end, next int, inPlace bool, emit func([]byte)) (int, bool) {
+// line is one line of a Scan input: p[pos:end], its line ending running to next.
+type line struct{ pos, end, next int }
+
+// endLine handles line l of p and returns the new frame start and whether
+// the frame is still in place.
+func (s *Scanner) endLine(p []byte, l line, in int, inPlace bool, sink frameSink, shift int) (int, bool) {
+	pos, end, next := l.pos, l.end, l.next
 	if s.lineLen == 0 && end == pos { // blank line: the frame ends
 		if inPlace {
-			s.endInPlace(p[in:pos], emit)
+			s.endInPlace(p[in:pos], sink, next+shift)
 		} else {
-			s.endFrame(emit)
+			s.endFrame(sink, next+shift)
 		}
 		return next, true
 	}
@@ -138,36 +167,46 @@ func (s *Scanner) carry(b []byte) {
 
 // endInPlace ends a frame that lies wholly in the current input; frame ends
 // with the "\n" of its last line (or is empty).
-func (s *Scanner) endInPlace(frame []byte, emit func([]byte)) {
+func (s *Scanner) endInPlace(frame []byte, sink frameSink, end int) {
+	var f []byte
 	switch {
 	case len(frame) > MaxFrameBytes:
 		s.Oversized++
 	case s.hasField && len(frame) > 0:
-		emit(frame[:len(frame)-1])
+		f = frame[:len(frame)-1]
 	}
 	s.hasField = false
+	sink.frame(f, end)
 }
 
-// endFrame ends the carried frame: emit it if it carries a field.
-func (s *Scanner) endFrame(emit func([]byte)) {
+// endFrame ends the carried frame; f is nil unless it carries a field.
+func (s *Scanner) endFrame(sink frameSink, end int) {
+	var f []byte
 	switch {
 	case s.skipping:
 		s.Oversized++
 	case s.hasField && len(s.buf) > 0:
-		emit(s.buf[:len(s.buf)-1])
+		f = s.buf[:len(s.buf)-1]
 	}
+	sink.frame(f, end)
 	s.buf = s.buf[:0]
 	s.hasField, s.skipping = false, false
 }
 
 // Finish ends the stream: a last frame without its closing blank line is
 // emitted. The frame state is then reset for reuse; Oversized is kept.
-func (s *Scanner) Finish(emit func(frame []byte)) {
+func (s *Scanner) Finish(emit func(frame []byte)) { s.finish(emitFunc(emit)) }
+
+// finish is Finish for a frameSink; the last frame's end is -1. A sink is
+// told only about a frame that has bytes.
+func (s *Scanner) finish(sink frameSink) {
 	if s.lineLen > 0 {
 		s.noteLine(nil)
 		s.carry(newline)
 	}
-	s.endFrame(emit)
+	if s.lineLen > 0 || len(s.buf) > 0 || s.skipping || s.hasField {
+		s.endFrame(sink, -1)
+	}
 	s.Reset()
 }
 

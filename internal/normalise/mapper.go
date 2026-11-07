@@ -82,9 +82,10 @@ var (
 
 // SplitFrame extracts the event name and data from one SSE frame (the bytes
 // between blank lines). Several data lines are joined with "\n"; comment
-// lines are ignored.
+// lines are ignored. With one data line (the usual frame) data is a
+// subslice of frame, so nothing is copied: it is valid as long as frame is.
 func SplitFrame(frame []byte) (event string, data []byte) {
-	first := true
+	lines, owned := 0, false
 	for len(frame) > 0 {
 		var line []byte
 		line, frame, _ = bytes.Cut(frame, newline)
@@ -93,11 +94,15 @@ func SplitFrame(frame []byte) (event string, data []byte) {
 			event = string(bytes.TrimPrefix(name, space))
 		} else if v, ok := bytes.CutPrefix(line, dataPrefix); ok {
 			v = bytes.TrimPrefix(v, space)
-			if !first {
-				data = append(data, '\n')
+			switch lines++; {
+			case lines == 1:
+				data = v
+			case !owned: // never append into frame: copy the first line out
+				data, owned = append(append(make([]byte, 0, len(data)+1+len(v)), data...), '\n'), true
+				data = append(data, v...)
+			default:
+				data = append(append(data, '\n'), v...)
 			}
-			data = append(data, v...)
-			first = false
 		}
 	}
 	return event, data

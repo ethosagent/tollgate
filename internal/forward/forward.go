@@ -56,9 +56,10 @@ type Request struct {
 	// Shape picks the wire format of the error event appended to an SSE
 	// stream that breaks after it started.
 	Shape normalise.ErrorShape
-	// Frames, if not nil, receives a copy of every SSE frame after the
-	// client has been sent the bytes. Forward closes it when the call ends
-	// and records the ending in Frames.End.
+	// Frames, if not nil, receives a copy of every SSE frame the client was
+	// sent, after it was sent; with Final, that includes a replacement's
+	// frames and never a terminal region a Finalizer discarded. Forward
+	// closes it when the call ends and records the ending in Frames.End.
 	Frames *FrameQueue
 	// Final, if not nil, holds the terminal event of an SSE response until
 	// its Decide has run (final.go). Nil means the terminal event is relayed
@@ -74,6 +75,9 @@ type Result struct {
 	// must abort the connection so the client sees a cut stream, not a
 	// clean end. An SSE stream is never cut: it ends with an error event.
 	Cut bool
+	// Final is what the Finalizer barrier did, when the response went
+	// through it; nil otherwise.
+	Final *Finalized
 }
 
 // Forward sends req upstream under ctx and relays the response to w
@@ -155,7 +159,7 @@ func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Respon
 	var sent bool
 	var err error
 	if req.Final != nil && finalizable(resp) {
-		sent, err = relayFinal(ctx, w, resp, src, req, env)
+		sent, res.Final, err = relayFinal(ctx, w, resp, src, req, env)
 	} else {
 		// begin stays on the stack: nothing here may let it escape (STR-6).
 		begin := func() {

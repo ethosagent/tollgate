@@ -130,16 +130,30 @@ func TestSplitFrame(t *testing.T) {
 		{"crlf", "event: x\r\ndata: y\r\n", "x", "y"},
 		{"comment ignored", ": keepalive\ndata: z", "", "z"},
 		{"multi data joins with newline", "data: a\ndata: b", "", "a\nb"},
+		{"three data lines", "data: a\ndata: b\ndata: c", "", "a\nb\nc"},
 		{"no space after colon", "data:q", "", "q"},
 		{"empty", "", "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ev, data := SplitFrame([]byte(tc.in))
+			in := []byte(tc.in)
+			ev, data := SplitFrame(in)
 			if ev != tc.event || string(data) != tc.data {
 				t.Fatalf("got (%q,%q), want (%q,%q)", ev, data, tc.event, tc.data)
 			}
+			if string(in) != tc.in {
+				t.Fatalf("SplitFrame changed its input: %q", in)
+			}
 		})
+	}
+}
+
+// TestSplitFrame_OneDataLineCopiesNothing: the usual frame is split
+// without an allocation (HOT-5); data aliases the frame.
+func TestSplitFrame_OneDataLineCopiesNothing(t *testing.T) {
+	frame := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}`)
+	if n := testing.AllocsPerRun(100, func() { SplitFrame(frame) }); n != 0 {
+		t.Fatalf("SplitFrame allocated %v times per frame, want 0", n)
 	}
 }
 

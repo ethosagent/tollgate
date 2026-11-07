@@ -91,8 +91,19 @@ func (q *FrameQueue) offer(frame []byte) {
 	q.gap = 0
 }
 
-// lose counts n dropped frames.
+// frame makes the queue the Scanner's sink: every frame that carries a
+// field is offered.
+func (q *FrameQueue) frame(f []byte, _ int) {
+	if f != nil {
+		q.offer(f)
+	}
+}
+
+// lose counts n dropped frames. It is nil-safe.
 func (q *FrameQueue) lose(n int64) {
+	if q == nil || n == 0 {
+		return
+	}
 	q.gap += n
 	q.dropped.Add(n)
 }
@@ -120,10 +131,6 @@ func Tee(dst http.ResponseWriter, src io.Reader, q *FrameQueue, begin func()) (i
 	defer relayBufs.Put(bp)
 	buf := *bp
 	var sc Scanner
-	var emit func([]byte)
-	if q != nil {
-		emit = q.offer
-	}
 	var total int64
 	for {
 		n, rerr := src.Read(buf)
@@ -138,13 +145,13 @@ func Tee(dst http.ResponseWriter, src io.Reader, q *FrameQueue, begin func()) (i
 				return total, fmt.Errorf("%w: %w", ErrClientWrite, werr)
 			}
 			if q != nil {
-				sc.Scan(buf[:n], emit)
+				sc.scan(buf[:n], q)
 				q.lose(sc.takeOversized())
 			}
 		}
 		if errors.Is(rerr, io.EOF) {
 			if q != nil {
-				sc.Finish(emit)
+				sc.finish(q)
 				q.lose(sc.takeOversized())
 			}
 			return total, nil

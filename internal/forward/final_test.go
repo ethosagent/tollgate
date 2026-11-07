@@ -93,48 +93,74 @@ func fixtures(t *testing.T) []fixtureCase {
 	return out
 }
 
-// terminalStart is where the terminal region of raw begins, by the book.
+// spans records every frame end the Scanner reports.
+type spans struct {
+	frames [][]byte // nil for frames without a field
+	ends   []int
+}
+
+func (s *spans) frame(f []byte, end int) {
+	s.frames, s.ends = append(s.frames, bytes.Clone(f)), append(s.ends, end)
+}
+
+// terminalStart is where the terminal region of raw begins, by the book:
+// the start of the first frame the Terminal opens on, or -1.
 func terminalStart(raw []byte, term normalise.Terminal) int {
-	for off := 0; ; {
-		n := frameEnd(raw[off:])
-		if n < 0 {
-			return -1
+	var sc Scanner
+	sp := &spans{}
+	sc.scan(raw, sp)
+	sc.finish(sp)
+	start := 0
+	for i, f := range sp.frames {
+		if f != nil {
+			if ev, data := normalise.SplitFrame(f); term.Opens(ev, data) {
+				return start
+			}
 		}
-		if ev, data := normalise.SplitFrame(raw[off : off+n]); term.Opens(ev, data) {
-			return off
-		}
-		off += n
+		start = sp.ends[i]
 	}
+	return -1
 }
 
 func TestFinal_ReleaseIsByteExactAndHoldsOnlyTheTerminal(t *testing.T) {
 	for _, fc := range fixtures(t) {
-		raw, err := os.ReadFile(fc.file)
+		lf, err := os.ReadFile(fc.file)
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, n := range []int{1, 7, 37, 4096} {
-			t.Run(filepath.Base(fc.file)+"/"+strconv.Itoa(n), func(t *testing.T) {
-				w := &recWriter{}
-				var atDecide []byte
-				fz := finalizeFor(t, fc.wire, release)
-				fz.Decide = func(context.Context, model.StreamSummary) model.Decision {
-					atDecide = bytes.Clone(w.buf.Bytes())
-					return model.Decision{}
-				}
-				res, err := forwardFinal(t, &upScript{bodies: []*http.Response{sseResp(raw, n)}}, w, fz, nil)
-				if err != nil || res.Finish != model.FinishOK {
-					t.Fatalf("res=%+v err=%v", res, err)
-				}
-				if !bytes.Equal(w.buf.Bytes(), raw) {
-					t.Fatalf("client bytes differ from the upstream bytes:\n%q\n%q", w.buf.Bytes(), raw)
-				}
-				if at := terminalStart(raw, fz.Term); at >= 0 && !bytes.Equal(atDecide, raw[:at]) {
-					t.Fatalf("at Decide the client had %d bytes, want exactly the %d before the terminal region", len(atDecide), at)
-				}
-			})
+		for _, eol := range []string{"\n", "\r\n", "\r"} { // the tee's Scanner takes all three
+			raw := bytes.ReplaceAll(lf, []byte("\n"), []byte(eol))
+			for _, n := range []int{1, 7, 37, 4096} {
+				releaseCase(t, fc, raw, n, strconv.Quote(eol))
+			}
 		}
 	}
+}
+
+// releaseCase checks one fixture, line ending and read size: the client gets
+// the upstream bytes exactly, and at Decide it had exactly those before the
+// terminal region.
+func releaseCase(t *testing.T, fc fixtureCase, raw []byte, n int, eol string) {
+	t.Helper()
+	t.Run(filepath.Base(fc.file)+"/"+eol+"/"+strconv.Itoa(n), func(t *testing.T) {
+		w := &recWriter{}
+		var atDecide []byte
+		fz := finalizeFor(t, fc.wire, release)
+		fz.Decide = func(context.Context, model.StreamSummary) model.Decision {
+			atDecide = bytes.Clone(w.buf.Bytes())
+			return model.Decision{}
+		}
+		res, err := forwardFinal(t, &upScript{bodies: []*http.Response{sseResp(raw, n)}}, w, fz, nil)
+		if err != nil || res.Finish != model.FinishOK {
+			t.Fatalf("res=%+v err=%v", res, err)
+		}
+		if !bytes.Equal(w.buf.Bytes(), raw) {
+			t.Fatalf("client bytes differ from the upstream bytes:\n%q\n%q", w.buf.Bytes(), raw)
+		}
+		if at := terminalStart(raw, fz.Term); at >= 0 && !bytes.Equal(atDecide, raw[:at]) {
+			t.Fatalf("at Decide the client had %d bytes, want exactly the %d before the terminal region", len(atDecide), at)
+		}
+	})
 }
 
 func TestFinal_NoTerminalMeansNoDecide(t *testing.T) {
@@ -231,17 +257,18 @@ func TestFinal_Failures(t *testing.T) {
 			t.Fatalf("the held terminal must go out before the error event: %q", w.buf.String())
 		}
 	})
-	t.Run("an unending frame is relayed raw", func(t *testing.T) {
+	t.Run("an unending frame is relayed raw and the terminal is still held", func(t *testing.T) {
 		big := append([]byte("data: "), bytes.Repeat([]byte("a"), MaxFrameBytes+10)...)
 		big = append(big, "\n\ndata: [DONE]\n\n"...)
 		called := false
 		f := finalizeFor(t, model.WireOpenAIChat, func(model.StreamSummary) model.Decision { called = true; return model.Decision{} })
 		w := &recWriter{}
-		if _, err := forwardFinal(t, &upScript{bodies: []*http.Response{sseResp(append([]byte("data: "+strings.Repeat("b", 10)), big[6:]...), 70000)}}, w, f, nil); err != nil {
+		body := append([]byte("data: "+strings.Repeat("b", 10)), big[6:]...)
+		if _, err := forwardFinal(t, &upScript{bodies: []*http.Response{sseResp(body, 16<<10)}}, w, f, nil); err != nil {
 			t.Fatal(err)
 		}
-		if called || w.buf.Len() == 0 {
-			t.Fatalf("called=%v written=%d", called, w.buf.Len())
+		if !called || !bytes.Equal(w.buf.Bytes(), body) {
+			t.Fatalf("called=%v, bytes equal=%v; want the [DONE] after the oversized frame decided on, bytes exact", called, bytes.Equal(w.buf.Bytes(), body))
 		}
 	})
 	t.Run("not an event stream is relayed without the barrier", func(t *testing.T) {
