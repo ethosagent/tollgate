@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/model"
-	"github.com/ethosagent/tollgate/testkit"
 )
 
 // sseData builds SSE frames from JSON payloads.
@@ -132,7 +131,7 @@ func TestAnthropicUsage_ZeroOutputTokensOverridesStart(t *testing.T) {
 func TestEventMapper_FinishSignalsTruncation(t *testing.T) {
 	for _, name := range []string{"openai/chat-stream-text", "anthropic/messages-stream-text"} {
 		w, _ := ForWire(wireOf(name))
-		frames := testkit.Chunks(name)
+		frames := fx.Chunks(name)
 		t.Run(name+"/complete stream", func(t *testing.T) {
 			m := w.NewEventMapper()
 			feed(t, m, frames)

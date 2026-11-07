@@ -14,8 +14,17 @@
 // before a cut (Options.FailAfterChunks). PathFor gives the API path a
 // fixture's provider serves.
 //
-// A later release adds Run, a harness that drives a plugin through every
-// lifecycle stage and records its calls.
+// Run is the plugin harness. It drives an Authenticator, Hook, Finalizer or
+// MetricSink through a real tollgate.New and a FakeUpstream, one call per
+// fixture, and returns a Recording of every call the plugin received, in
+// order, with copies of its arguments:
+//
+//	rec := testkit.Run(t, myHook{}, "openai/chat-stream-text")
+//	rec.Of(testkit.StageBefore)[0].Call.Model // what Before was given
+//
+// RunWith takes a Config for several plugins, request headers and upstream
+// faults. NewServer starts a fake upstream without a testing.TB, for tools
+// such as cmd/tollgate-bench.
 //
 // Dependency law (internal/archtest, rule D6): standard library and the root
 // tollgate package only. It is public API and follows semver.

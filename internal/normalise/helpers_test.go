@@ -8,13 +8,12 @@ import (
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/model"
-	"github.com/ethosagent/tollgate/testkit"
 )
 
 // fixture loads a testkit fixture by name ("openai/chat-stream-text").
 func fixture(t testing.TB, name string) []byte {
 	t.Helper()
-	b, err := testkit.Fixture(name)
+	b, err := fx.Fixture(name)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +24,7 @@ func fixture(t testing.TB, name string) []byte {
 // error bodies), so a new recording needs a golden file.
 func responseFixtures() []string {
 	var names []string
-	for _, n := range testkit.FixtureNames() {
+	for _, n := range fx.FixtureNames() {
 		base := path.Base(n)
 		if !strings.HasPrefix(base, "request-") && !strings.HasPrefix(base, "error-") {
 			names = append(names, n)
@@ -37,7 +36,7 @@ func responseFixtures() []string {
 // requestFixtures lists every request-body fixture.
 func requestFixtures() []string {
 	var names []string
-	for _, n := range testkit.FixtureNames() {
+	for _, n := range fx.FixtureNames() {
 		if strings.HasPrefix(path.Base(n), "request-") {
 			names = append(names, n)
 		}
@@ -46,7 +45,7 @@ func requestFixtures() []string {
 }
 
 func wireOf(name string) model.WireFormat {
-	if testkit.PathFor(name) == "/v1/messages" {
+	if fx.PathFor(name) == "/v1/messages" {
 		return model.WireAnthropicMessages
 	}
 	return model.WireOpenAIChat
@@ -83,7 +82,7 @@ func eventsOf(t testing.TB, name string) []model.Event {
 		}
 		return evs
 	}
-	return feed(t, w.NewEventMapper(), testkit.Chunks(name))
+	return feed(t, w.NewEventMapper(), fx.Chunks(name))
 }
 
 // folded is the final state a consumer would derive from an event sequence.

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/model"
-	"github.com/ethosagent/tollgate/testkit"
 )
 
 // TestOpenAI_MultiChoiceToolsDoNotCollide covers review-004: with n>1 two
@@ -64,7 +63,7 @@ func TestEventMapper_GapSuppressesFalseTruncation(t *testing.T) {
 	for _, name := range []string{"openai/chat-stream-text", "anthropic/messages-stream-text"} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := ForWire(wireOf(name))
-			frames := testkit.Chunks(name)
+			frames := fx.Chunks(name)
 			m := w.NewEventMapper()
 			feed(t, m, frames[:2])
 			m.Gap(3)
@@ -86,7 +85,7 @@ func TestMapFrame_RecordedMidStreamError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w, _ := ForWire(wireOf(name))
 			m := w.NewEventMapper()
-			evs := feed(t, m, testkit.Chunks(name))
+			evs := feed(t, m, fx.Chunks(name))
 			last := evs[len(evs)-1]
 			if fold(evs).Text != "Hel" || last.Kind != model.EventError || last.Err != wantErr {
 				t.Fatalf("events = %+v", evs)

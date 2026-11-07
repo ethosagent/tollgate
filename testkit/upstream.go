@@ -59,11 +59,19 @@ type FakeUpstream struct {
 // the anthropic fixtures. Anything else is a 404.
 func NewFakeUpstream(t testing.TB, opts Options) *FakeUpstream {
 	t.Helper()
+	f, stop := NewServer(opts)
+	t.Cleanup(stop)
+	return f
+}
+
+// NewServer starts the same fake upstream as NewFakeUpstream without needing a
+// testing.TB, for tools such as benchmarks. Call the returned function to stop
+// the server; it waits for in-flight requests.
+func NewServer(opts Options) (*FakeUpstream, func()) {
 	f := &FakeUpstream{opts: opts}
 	f.srv = httptest.NewServer(http.HandlerFunc(f.serve))
 	f.URL = f.srv.URL
-	t.Cleanup(f.srv.Close)
-	return f
+	return f, f.srv.Close
 }
 
 // Client returns an HTTP client for the fake (no proxy, no shared state).

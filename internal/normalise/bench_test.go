@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/model"
-	"github.com/ethosagent/tollgate/testkit"
 )
 
 func BenchmarkParseRequest(b *testing.B) {
@@ -26,7 +25,7 @@ func BenchmarkParseRequest(b *testing.B) {
 func BenchmarkEventMapper(b *testing.B) {
 	for _, name := range []string{"openai/chat-stream-tools", "anthropic/messages-stream-thinking"} {
 		w, _ := ForWire(wireOf(name))
-		frames := testkit.Chunks(name)
+		frames := fx.Chunks(name)
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {
