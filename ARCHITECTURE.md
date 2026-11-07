@@ -77,7 +77,8 @@ request ─► Auth ─► Admission ─► ProviderResolver ─► limits/norma
   client **before** handing a copy to the parser. Parsed events go to a
   bounded channel consumed by OnEvent hooks in another goroutine.
 - Admission fires right after Auth so a rejected tenant costs nothing.
-- Finalizers hold only the terminal event (`[DONE]` / `message_stop`).
+- Finalizers hold only the terminal region (seam 8 below); everything
+  before it is written and flushed as it arrives.
 - Every call, rejected or not, ends in one per-call record (`outcome`,
   `record.go`): `finishCall` builds its one `Metric` and hands it to After,
   then to the metric sink seam. With no hook and no sink nothing is parsed
@@ -97,6 +98,28 @@ request ─► Auth ─► Admission ─► ProviderResolver ─► limits/norma
 | 8 | `Finalizer` | none (zero overhead) | before the terminal stream event |
 | 9 | `Hook.OnResponse` | pass-through | `stream:false` only |
 
+**Seam 3.** The default strategy attributes a call to the caller's session
+header (keyed by tenant), which the core strips before forwarding and hands
+over as `Call.SessionHeader` (ADR 0012), or, absent that, to a prediction:
+SHA-256(tenant, system prompt, first user message) truncated to 16 bytes,
+plus a continuation rule (same prefix, ≤ 2 turns of growth, last assistant
+turn made a tool call). `Closed()` carries sessions that went quiet, were
+evicted or were replaced; the core runs `OnSessionClosed` once for each.
+`Options.MeasureSessionPrediction` (off) also predicts header calls and
+counts agreement in `/statusz`.
+
+**Seam 8.** A Finalizer sees only streamed SSE responses, single-choice
+(`Call.Choices` ≤ 1, ADR 0013). The terminal region (from the frame
+carrying the finish reason through end of stream) is held; everything
+before it is written and flushed immediately. Release writes the held
+bytes; Replace writes `Response.Body` verbatim as SSE frames; Recover makes
+one more upstream call (same target, headers, credentials; the finalizer's
+body), splices its frames and decides again on its terminal. Over budget,
+panic or timeout means release. The barrier frames with the tee's
+`Scanner`; the OnEvent consumer sees exactly the frames the client got
+(never a discarded terminal), and the `Metric`'s usage sums every upstream
+call. A region over 1 MiB is released undecided and counted.
+
 Stability: after v1.0 these interfaces are frozen. New capability arrives as a
 new optional interface that the core type-asserts, so old plugins compile.
 
@@ -105,14 +128,17 @@ new optional interface that the core type-asserts, so old plugins compile.
 | Limit | Default |
 |---|---|
 | Max request body (pre-parse) | 16 MiB |
+| stream:false response copied for usage (`MaxResponseCopy`) | 1 MiB; larger: no usage, counted |
 | Upstream connect / first byte / idle stream | 10 s / 60 s / 120 s |
 | Max call duration | 15 min |
 | Hook.Before deadline | 50 ms each, 200 ms chain |
 | Auth / ProviderResolver deadline | 5 s per call (`ExtensionDeadline`) |
 | Admission deadline, queue wait included | 30 s (`AdmissionDeadline`) |
 | Finalizer budget / recovery ceiling | 2 per finalizer / 10 per call |
+| Finalizer Decide deadline: each / all of a call (`FinalizerDeadline`, `FinalizerCallDeadline`) | 200 ms / 1 s |
 | Event buffer / metric queue | 1024 / 10 000; overflow drops + counts |
 | Metric batch / flush interval | 500 / 1 s (`MetricBatch`, `MetricFlushInterval`) |
+| Sink write timeout / failures before not ready | 10 s / 3 (`MetricWriteTimeout`, `MetricFailAfter`) |
 | Session TTL / max live sessions | 5 min / 100 000 (LRU) |
 | Transport pool per host | 100 conns, 20 idle, 30 s idle expiry, HTTP/2 |
 
@@ -142,7 +168,7 @@ headers, hop-by-hop headers and any header an extension declares through
 | Auth/Admission/resolver panic | recovered; provider-shaped 500; logged with seam, tenant, call id | `rejected` |
 | Auth/Admission/resolver past its deadline | provider-shaped 503; logged as above; a slot granted late is released | `rejected` |
 | Hook panic/timeout | logged with tenant + call id; hook skipped; call proceeds | unchanged |
-| Sink down | metrics dropped and counted; `/readyz` fails after N consecutive failures | unchanged |
+| Sink down | metrics dropped and counted; `/readyz` fails after `MetricFailAfter` consecutive failures | unchanged |
 
 A stream that times out or whose upstream drops after the first byte ends
 with a provider-shaped SSE error event and a clean close (`Finish` timeout /
@@ -161,9 +187,15 @@ body too large 413, bad resolver target 502, upstream unreachable 502, timed
 out 504, extension panic 500, extension past its deadline 503.
 
 Endpoints served by the core: `ANY /{provider}/*`, `GET /healthz`,
-`GET /readyz` (503 after 3 consecutive sink failures). `GET /statusz` and
-`GET /metrics` are served by `Proxy.AdminHandler()`, never on the proxy mux;
-the host binds it to a private listener. `Proxy.Close(ctx)` flushes the sink.
+`GET /readyz` (503 while a configured sink's writer is not started, or after
+`MetricFailAfter` consecutive sink failures; one success recovers).
+`GET /statusz` and `GET /metrics` are served by `Proxy.AdminHandler()`,
+never on the proxy mux; the host binds it to a private listener. They carry
+calls, latency, tokens, queue, session and give-up counters
+(`usage_not_read`, `unheld_terminals`, dropped events); label values are
+bounded. Lifecycle: `New` starts no goroutine; `Proxy.Start(ctx)` runs the
+metric writer; `Proxy.Close(ctx)` flushes the sink (even if never started)
+and stops the session sweeper; `Start` after `Close` is `ErrClosed`.
 
 ## 8. Amendment procedure
 
