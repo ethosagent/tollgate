@@ -1,14 +1,8 @@
 package archtest
 
 import (
-	"bytes"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -26,19 +20,37 @@ var nestedThirdParty = map[string][]string{
 // checkNested applies the ext-layer law to one import of a nested-module
 // package: stdlib, the root public API, its own module's packages (rel is
 // under the module path) and allowlisted third-party only. Never internal/.
+//
+// This check is the only enforcement of D5 for nested modules: Go's internal
+// rule is import-path based, and a nested module's path is under the root
+// module's path, so `go build` would accept the import (ADR 0011).
 func checkNested(dir, rel, imp string) string {
 	switch {
 	case isInternal(imp):
 		return fmt.Sprintf("D5 %s imports %s: extensions use the public API only: never internal/", rel, imp)
 	case isStd(imp), isRoot(imp), strings.HasPrefix(imp, module+"/"):
 		return ""
-	}
-	for _, prefix := range nestedThirdParty[dir] {
-		if imp == prefix || strings.HasPrefix(imp, prefix+"/") {
-			return ""
-		}
+	case underAny(imp, nestedThirdParty[dir]):
+		return ""
 	}
 	return fmt.Sprintf("D7 %s imports %s: third-party import not on the nested-module allowlist for %s (needs an ADR)", rel, imp, dir)
+}
+
+// nestedViolations checks every import edge the compiler sees for one
+// nested-module package, test files included: a nested module's tests are
+// held to the same law as its code (D5, D7).
+func nestedViolations(dir string, p goPackage) []string {
+	rel := strings.TrimPrefix(p.ImportPath, module+"/")
+	var out []string
+	if p.Doc == "" {
+		out = append(out, fmt.Sprintf("P1 %s: package has no doc comment", rel))
+	}
+	for _, imp := range slices.Concat(p.Imports, p.TestImports, p.XTestImports) {
+		if v := checkNested(dir, rel, imp); v != "" {
+			out = append(out, v)
+		}
+	}
+	return out
 }
 
 func TestCheckNested_Edges(t *testing.T) {
@@ -60,6 +72,28 @@ func TestCheckNested_Edges(t *testing.T) {
 	}
 }
 
+func TestNestedViolations_CoverTestImports(t *testing.T) {
+	const dir = "ext/metrics/postgres"
+	cases := []struct {
+		name string
+		p    goPackage
+		want string
+	}{
+		{"code", goPackage{Imports: []string{module + "/internal/model"}}, "D5 "},
+		{"in-package test", goPackage{TestImports: []string{module + "/internal/chain"}}, "D5 "},
+		{"external test", goPackage{XTestImports: []string{"github.com/lib/pq"}}, "D7 "},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			c.p.ImportPath, c.p.Doc = module+"/"+dir, "doc"
+			got := nestedViolations(dir, c.p)
+			if len(got) != 1 || !strings.HasPrefix(got[0], c.want) {
+				t.Errorf("nestedViolations = %q, want one %q violation", got, c.want)
+			}
+		})
+	}
+}
+
 func TestNestedModules(t *testing.T) {
 	root := moduleRoot(t)
 	dirs := nestedModuleDirs(t, root)
@@ -73,51 +107,31 @@ func TestNestedModules(t *testing.T) {
 			t.Errorf("nested module %s is not in nestedThirdParty: register it (with an empty list if it has no deps)", dir)
 		}
 		for _, p := range listIn(t, filepath.Join(root, dir)) {
-			rel := strings.TrimPrefix(p.ImportPath, module+"/")
-			if p.Doc == "" {
-				t.Errorf("P1 %s: package has no doc comment", rel)
-			}
-			for _, imp := range p.Imports {
-				if v := checkNested(dir, rel, imp); v != "" {
-					t.Error(v)
-				}
+			for _, v := range nestedViolations(dir, p) {
+				t.Error(v)
 			}
 		}
 	}
 }
 
-// TestNestedModule_CannotImportInternal proves Go itself rejects a nested
-// module importing the root module's internal/ packages, so D5 holds across
-// the module boundary even without this gate.
-func TestNestedModule_CannotImportInternal(t *testing.T) {
-	root := moduleRoot(t)
-	tmp := t.TempDir()
-	gomod := fmt.Sprintf("module example.com/probe\n\ngo 1.26\n\nrequire %s v0.0.0\n\nreplace %s => %s\n", module, module, root)
-	src := "package probe\n\nimport _ \"" + module + "/internal/model\"\n"
-	for name, body := range map[string]string{"go.mod": gomod, "probe.go": src} {
-		if err := os.WriteFile(filepath.Join(tmp, name), []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cmd := exec.Command("go", "build", "./...")
-	cmd.Dir = tmp
-	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod", "GOWORK=off")
-	out, err := cmd.CombinedOutput()
-	if err == nil || !bytes.Contains(out, []byte("use of internal package")) {
-		t.Fatalf("expected a 'use of internal package' error, got err=%v\n%s", err, out)
-	}
-}
-
+// nestedModuleDirs finds the go.mod files under ext/ with the same rule as
+// scripts/lib.sh nested_modules: directories named testdata or starting with
+// "." or "_" are skipped, as the go command skips them.
 func nestedModuleDirs(t *testing.T, root string) []string {
 	t.Helper()
 	var dirs []string
 	err := filepath.WalkDir(filepath.Join(root, "ext"), func(path string, d fs.DirEntry, err error) error {
-		if err == nil && !d.IsDir() && d.Name() == "go.mod" {
-			rel, rerr := filepath.Rel(root, filepath.Dir(path))
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir() && skippedDir(d.Name()):
+			return filepath.SkipDir
+		case !d.IsDir() && d.Name() == "go.mod":
+			rel, err := filepath.Rel(root, filepath.Dir(path))
 			dirs = append(dirs, filepath.ToSlash(rel))
-			return rerr
+			return err
 		}
-		return err
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("walk ext/: %v", err)
@@ -126,25 +140,6 @@ func nestedModuleDirs(t *testing.T, root string) []string {
 	return dirs
 }
 
-func listIn(t *testing.T, dir string) []goPackage {
-	t.Helper()
-	cmd := exec.Command("go", "list", "-json", "./...")
-	cmd.Dir = dir
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("go list in %s: %v\n%s", dir, err, stderr.String())
-	}
-	var pkgs []goPackage
-	dec := json.NewDecoder(bytes.NewReader(out))
-	for {
-		var p goPackage
-		if err := dec.Decode(&p); errors.Is(err, io.EOF) {
-			return pkgs
-		} else if err != nil {
-			t.Fatalf("decode go list output: %v", err)
-		}
-		pkgs = append(pkgs, p)
-	}
+func skippedDir(name string) bool {
+	return name == "testdata" || strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
 }

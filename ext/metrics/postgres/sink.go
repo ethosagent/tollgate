@@ -5,7 +5,7 @@ import (
 	_ "embed" // Schema
 	"errors"
 	"fmt"
-	"regexp"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -20,8 +20,8 @@ var Schema string
 
 const defaultTable = "tollgate_metrics"
 
-// identRE is a plain, unquoted-safe Postgres identifier (max 63 bytes).
-var identRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,62}$`)
+// maxIdent is Postgres's identifier length limit (NAMEDATALEN-1), in bytes.
+const maxIdent = 63
 
 // columns is the COPY column list, in rowOf order.
 var columns = []string{
@@ -32,30 +32,45 @@ var columns = []string{
 
 // Options configures a Sink.
 type Options struct {
-	// Table is the destination table; default "tollgate_metrics". It must be a
-	// plain identifier ([A-Za-z_][A-Za-z0-9_]*, at most 63 bytes).
+	// Table is the destination table, optionally schema-qualified
+	// ("schema.table"); default "tollgate_metrics". Each part is quoted as given
+	// (so it is case-sensitive), must be 1 to 63 bytes and must not contain a
+	// double quote or a control character.
 	Table string
 }
 
-func (o Options) table() (string, error) {
+// table returns the quoted-by-construction identifier for Table. pgx quotes
+// every part, so this rejects only names Postgres cannot store or that would
+// read ambiguously in logs.
+func (o Options) table() (pgx.Identifier, error) {
 	if o.Table == "" {
-		return defaultTable, nil
+		return pgx.Identifier{defaultTable}, nil
 	}
-	if !identRE.MatchString(o.Table) {
-		return "", fmt.Errorf("postgres sink: invalid table name %q", o.Table)
+	parts := strings.Split(o.Table, ".")
+	if len(parts) > 2 {
+		return nil, fmt.Errorf("postgres sink: table %q has more than schema.table", o.Table)
 	}
-	return o.Table, nil
+	for _, part := range parts {
+		if len(part) == 0 || len(part) > maxIdent || strings.ContainsFunc(part, badIdentRune) {
+			return nil, fmt.Errorf("postgres sink: invalid table name %q", o.Table)
+		}
+	}
+	return pgx.Identifier(parts), nil
 }
+
+func badIdentRune(r rune) bool { return r == '"' || r < 0x20 || r == 0x7f }
 
 // copier is the one pool method the sink uses; tests substitute a fake.
 type copier interface {
 	CopyFrom(ctx context.Context, table pgx.Identifier, cols []string, src pgx.CopyFromSource) (int64, error)
 }
 
-// Sink is a tollgate.MetricSink that writes each batch with one COPY.
+// Sink is a tollgate.MetricSink that writes each batch with one COPY. Its
+// fields are fixed at New and the pool is goroutine-safe, so Write is safe for
+// concurrent use.
 type Sink struct {
 	copier copier
-	table  string
+	table  pgx.Identifier
 }
 
 var _ tollgate.MetricSink = (*Sink)(nil)
@@ -75,6 +90,7 @@ func New(pool *pgxpool.Pool, opts Options) (*Sink, error) {
 
 // Write inserts the batch in one COPY round trip, bounded by ctx. Any error
 // (including a short copy) is returned so the core counts the batch as dropped.
+// Safe for concurrent use.
 func (s *Sink) Write(ctx context.Context, batch []tollgate.Metric) error {
 	if len(batch) == 0 {
 		return nil
@@ -86,7 +102,7 @@ func (s *Sink) Write(ctx context.Context, batch []tollgate.Metric) error {
 	for i, m := range batch {
 		rows[i] = rowOf(m)
 	}
-	n, err := s.copier.CopyFrom(ctx, pgx.Identifier{s.table}, columns, pgx.CopyFromRows(rows))
+	n, err := s.copier.CopyFrom(ctx, s.table, columns, pgx.CopyFromRows(rows))
 	if err != nil {
 		return fmt.Errorf("postgres sink: copy %d rows: %w", len(batch), err)
 	}

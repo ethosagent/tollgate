@@ -136,34 +136,38 @@ func TestCheck_RejectsKnownBadEdges(t *testing.T) {
 }
 
 type goPackage struct {
-	ImportPath string
-	Doc        string // package doc synopsis; empty means no package comment
-	Imports    []string
+	ImportPath   string
+	Doc          string   // package doc synopsis; empty means no package comment
+	Imports      []string // non-test imports
+	TestImports  []string // imports of the package's in-package _test.go files
+	XTestImports []string // imports of its external (package x_test) test files
 }
 
-func listPackages(t *testing.T) []goPackage {
+// listPackages lists the root module's packages (nested modules excluded).
+func listPackages(t *testing.T) []goPackage { return listIn(t, moduleRoot(t)) }
+
+// listIn runs `go list -json ./...` in dir: one module's packages.
+func listIn(t *testing.T, dir string) []goPackage {
 	t.Helper()
-	root := moduleRoot(t)
 	cmd := exec.Command("go", "list", "-json", "./...")
-	cmd.Dir = root
+	cmd.Dir = dir
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("go list: %v\n%s", err, stderr.String())
+		t.Fatalf("go list in %s: %v\n%s", dir, err, stderr.String())
 	}
 	var pkgs []goPackage
 	dec := json.NewDecoder(bytes.NewReader(out))
 	for {
 		var p goPackage
 		if err := dec.Decode(&p); errors.Is(err, io.EOF) {
-			break
+			return pkgs
 		} else if err != nil {
 			t.Fatalf("decode go list output: %v", err)
 		}
 		pkgs = append(pkgs, p)
 	}
-	return pkgs
 }
 
 func moduleRoot(t *testing.T) string {
@@ -206,8 +210,11 @@ func either(fs ...func(string) bool) func(string) bool {
 	}
 }
 
-func allowedThirdParty(l, imp string) bool {
-	for _, prefix := range thirdParty[l] {
+func allowedThirdParty(l, imp string) bool { return underAny(imp, thirdParty[l]) }
+
+// underAny reports whether imp is one of prefixes or a package below one.
+func underAny(imp string, prefixes []string) bool {
+	for _, prefix := range prefixes {
 		if imp == prefix || strings.HasPrefix(imp, prefix+"/") {
 			return true
 		}

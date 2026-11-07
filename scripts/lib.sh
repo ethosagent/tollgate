@@ -16,10 +16,39 @@ gotool() { CGO_ENABLED=0 go tool -modfile="$REPO_ROOT/tools/go.mod" "$@"; }
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 # nested_modules lists the repo-relative dirs under ext/ that have their own
-# go.mod (ADR 0011: extensions with third-party deps). The root `./...` skips
-# them, so every gate that runs `go` per module loops over this list.
+# go.mod (ADR 0011: extensions with third-party deps). Directories named
+# testdata or starting with "." or "_" are skipped, as the go command skips
+# them; internal/archtest nestedModuleDirs uses the same rule. A failing find
+# fails the caller: it never reads as "no nested modules".
 nested_modules() {
-  (cd "$REPO_ROOT" && find ext -name go.mod -not -path '*/testdata/*' 2>/dev/null | sort | xargs -n1 dirname 2>/dev/null) || true
+  (cd "$REPO_ROOT" && find ext \( -type d \( -name testdata -o -name '.?*' -o -name '_*' \) -prune \) -o -name go.mod -print | sed 's|/go.mod$||' | sort)
+}
+
+# each_module CMD... runs CMD in the root module, then in each nested module,
+# with the module dir as cwd and MODULE set to its repo-relative path ("." for
+# the root). The root `./...` skips nested modules, so every per-module gate
+# goes through here. It stops at the first failure and returns non-zero.
+each_module() {
+  local mods m
+  mods="$(set -o pipefail; nested_modules)" || { echo "✗ cannot list nested modules"; return 1; }
+  for m in . $mods; do
+    (cd "$REPO_ROOT/$m" && MODULE="$m" "$@") || { echo "✗ module $m: $* failed"; return 1; }
+  done
+}
+
+# cover_gate runs the current module's tests with the race detector and a
+# coverage profile, and fails below COVERAGE_MIN (percent). Profiles: root
+# .logs/coverage.out, nested .logs/coverage-<slug>.out. Use via each_module.
+cover_gate() {
+  local prof="$REPO_ROOT/.logs/coverage.out" total
+  [ "${MODULE:-.}" = . ] || prof="$REPO_ROOT/.logs/coverage-$(slugify "$MODULE").out"
+  go test -race -count=1 -coverprofile="$prof" -covermode=atomic ./... || return 1
+  total="$(go tool cover -func="$prof" | awk '/^total:/ {gsub("%","",$3); print $3}')" || return 1
+  echo "coverage ${MODULE:-.}: ${total}% (min ${COVERAGE_MIN}%)"
+  if [ -z "$total" ] || awk -v t="$total" -v m="$COVERAGE_MIN" 'BEGIN { exit !(t < m) }'; then
+    echo "✗ ${MODULE:-.} coverage ${total:-unknown}% is below ${COVERAGE_MIN}%. Add tests; see $prof (go tool cover -func=$prof)."
+    return 1
+  fi
 }
 
 # list_files PATTERN... lists tracked and untracked-but-not-ignored files, so

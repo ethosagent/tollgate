@@ -4,12 +4,9 @@
 # nested modules for third-party deps: ADR 0011).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
-go mod tidy -diff || { echo "✗ root module not tidy (fix: go mod tidy)"; exit 1; }
-(cd tools && go mod tidy -diff) || { echo "✗ tools module not tidy (fix: cd tools && go mod tidy)"; exit 1; }
 . scripts/lib.sh
-for m in $(nested_modules); do
-  (cd "$m" && go mod tidy -diff) || { echo "✗ nested module $m not tidy (fix: cd $m && go mod tidy)"; exit 1; }
-done
+each_module go mod tidy -diff || { echo "✗ a module is not tidy (fix: cd <module> && go mod tidy)"; exit 1; }
+(cd tools && go mod tidy -diff) || { echo "✗ tools module not tidy (fix: cd tools && go mod tidy)"; exit 1; }
 if grep -qE '^(require|\s+[a-z0-9.-]+\.[a-z]+/)' go.mod; then
   echo "✗ go.mod has requirements; the library is stdlib-only (ADR 0002). A dependency needs a new ADR and an archtest allowlist entry."
   exit 1

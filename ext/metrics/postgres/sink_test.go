@@ -28,23 +28,27 @@ func sampleMetric() tollgate.Metric {
 func TestOptions_Validation(t *testing.T) {
 	cases := []struct {
 		table   string
-		want    string
+		want    string // the sanitized SQL identifier
 		wantErr bool
 	}{
-		{"", defaultTable, false},
-		{"my_metrics", "my_metrics", false},
-		{"_M1", "_M1", false},
-		{"1bad", "", true},
-		{"bad-name", "", true},
-		{"a.b", "", true},
+		{"", `"tollgate_metrics"`, false},
+		{"my_metrics", `"my_metrics"`, false},
+		{"_M1", `"_M1"`, false},
+		{"1st-metrics", `"1st-metrics"`, false},
+		{"ops.metrics", `"ops"."metrics"`, false},
+		{"a.b.c", "", true},
+		{".metrics", "", true},
+		{"ops.", "", true},
 		{`x"; DROP TABLE y; --`, "", true},
+		{"tab\x00le", "", true},
+		{"tab\nle", "", true},
 		{strings.Repeat("a", 64), "", true},
-		{strings.Repeat("a", 63), strings.Repeat("a", 63), false},
+		{strings.Repeat("a", 63), `"` + strings.Repeat("a", 63) + `"`, false},
 	}
 	for _, c := range cases {
 		got, err := Options{Table: c.table}.table()
-		if (err != nil) != c.wantErr || got != c.want {
-			t.Errorf("table(%q) = %q, %v; want %q, err=%v", c.table, got, err, c.want, c.wantErr)
+		if (err != nil) != c.wantErr || got.Sanitize() != c.want {
+			t.Errorf("table(%q) = %q, %v; want %q, err=%v", c.table, got.Sanitize(), err, c.want, c.wantErr)
 		}
 	}
 }
@@ -53,11 +57,11 @@ func TestNew_RejectsNilPoolAndBadTable(t *testing.T) {
 	if _, err := New(nil, Options{}); err == nil {
 		t.Error("New(nil pool) succeeded, want error")
 	}
-	if _, err := New(&pgxpool.Pool{}, Options{Table: "no way"}); err == nil {
+	if _, err := New(&pgxpool.Pool{}, Options{Table: "no..way"}); err == nil {
 		t.Error("New(bad table) succeeded, want error")
 	}
 	s, err := New(&pgxpool.Pool{}, Options{})
-	if err != nil || s.table != defaultTable {
+	if err != nil || s.table.Sanitize() != `"tollgate_metrics"` {
 		t.Errorf("New default = %+v, %v", s, err)
 	}
 }
@@ -102,7 +106,7 @@ func (f *fakeCopier) CopyFrom(_ context.Context, t pgx.Identifier, cols []string
 	return f.n, f.err
 }
 
-func newFake(f *fakeCopier) *Sink { return &Sink{copier: f, table: "t_metrics"} }
+func newFake(f *fakeCopier) *Sink { return &Sink{copier: f, table: pgx.Identifier{"t_metrics"}} }
 
 func TestWrite_OneCopyPerBatch(t *testing.T) {
 	f := &fakeCopier{n: -1}
@@ -183,12 +187,22 @@ func TestPostgresSink_WritesBatch(t *testing.T) {
 		t.Fatalf("Write: %v", err)
 	}
 
+	qs, err := New(pool, Options{Table: "public." + table}) // schema-qualified
+	if err != nil {
+		t.Fatal(err)
+	}
+	m3 := sampleMetric()
+	m3.CallID = "c3"
+	if err := qs.Write(ctx, []tollgate.Metric{m3}); err != nil {
+		t.Fatalf("Write schema-qualified: %v", err)
+	}
+
 	var n int
 	var finish string
 	var in, ttfb, dur int64
 	var started time.Time
-	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != 2 {
-		t.Fatalf("count = %d, %v; want 2", n, err)
+	if err := pool.QueryRow(ctx, "SELECT count(*) FROM "+table).Scan(&n); err != nil || n != 3 {
+		t.Fatalf("count = %d, %v; want 3", n, err)
 	}
 	err = pool.QueryRow(ctx, "SELECT finish, input_tokens, started_at, ttfb_ms, duration_ms FROM "+table+" WHERE call_id='c2'").
 		Scan(&finish, &in, &started, &ttfb, &dur)

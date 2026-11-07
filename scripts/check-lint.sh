@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# Gate: golangci-lint, version pinned in tools/go.mod, config in .golangci.yml.
+# Gate: golangci-lint, version pinned in tools/go.mod, config in .golangci.yml,
+# in every module (root and nested ext/) with the one root config.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 . scripts/lib.sh
-gotool golangci-lint run ./...
-for m in $(nested_modules); do
-  (cd "$m" && gotool golangci-lint run --config "$REPO_ROOT/.golangci.yml" ./...)
-done
+each_module gotool golangci-lint run --config "$REPO_ROOT/.golangci.yml" ./...

@@ -14,8 +14,9 @@
 //
 // Write honours the context deadline the core gives it and returns any error
 // (connection, constraint, short copy), so the core counts the batch as
-// dropped; it never retries or blocks a request. Table names are validated as
-// plain identifiers and quoted by pgx; metric values go through COPY, never
+// dropped; it never retries or blocks a request. A Sink is safe for concurrent
+// use. The table name (optionally "schema.table") is quoted part by part by pgx,
+// so it is safe by construction; metric values go through COPY, never
 // through string-built SQL. The pool, its TLS and its credentials belong to
 // the host.
 //

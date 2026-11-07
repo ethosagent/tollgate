@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Gate: go vet on every package.
+# Gate: go vet on every package of every module (root and nested ext/).
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 . scripts/lib.sh
-go vet ./...
-for m in $(nested_modules); do (cd "$m" && go vet ./...); done
+each_module go vet ./...

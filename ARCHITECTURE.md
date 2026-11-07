@@ -57,7 +57,8 @@ and the fake upstream (archtest checks non-test imports only); root tests may
 import `internal/*`. Production code never imports `testkit`.
 Enforcement: `internal/archtest` (stage `arch`) and `scripts/check-mod.sh`.
 Extensions needing a third-party module are nested modules under `ext/`
-(ADR 0011); archtest `TestNestedModules` applies the ext rules to each.
+(ADR 0011); archtest `TestNestedModules` applies the ext rules to each,
+test imports included (Go's internal rule does not cover them: same path prefix).
 
 Why the model lives in `internal/model` and is aliased from the root: the
 engine packages need the types, and the root package imports the engine, so
