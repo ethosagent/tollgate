@@ -82,7 +82,7 @@ func fixtures(t *testing.T) []fixtureCase {
 		dir  string
 		wire model.WireFormat
 	}{{"openai", model.WireOpenAIChat}, {"anthropic", model.WireAnthropicMessages}} {
-		files, _ := filepath.Glob("../../testkit/testdata/" + w.dir + "/*.sse")
+		files, _ := filepath.Glob("../fixtures/testdata/" + w.dir + "/*.sse")
 		for _, f := range files {
 			out = append(out, fixtureCase{f, w.wire})
 		}
@@ -189,7 +189,7 @@ func TestFinal_UnterminatedLastFrameIsStillDecided(t *testing.T) {
 }
 
 func TestFinal_SummaryDescribesTheStream(t *testing.T) {
-	raw, _ := os.ReadFile("../../testkit/testdata/openai/chat-stream-tools.sse")
+	raw, _ := os.ReadFile("../fixtures/testdata/openai/chat-stream-tools.sse")
 	var got model.StreamSummary
 	fz := finalizeFor(t, model.WireOpenAIChat, func(s model.StreamSummary) model.Decision { got = s; return model.Decision{} })
 	if _, err := forwardFinal(t, &upScript{bodies: []*http.Response{sseResp(raw, 64)}}, &recWriter{}, fz, nil); err != nil {
@@ -201,7 +201,7 @@ func TestFinal_SummaryDescribesTheStream(t *testing.T) {
 }
 
 func TestFinal_ReplaceSendsTheReplacementInsteadOfTheTerminal(t *testing.T) {
-	raw, _ := os.ReadFile("../../testkit/testdata/openai/chat-stream-text.sse")
+	raw, _ := os.ReadFile("../fixtures/testdata/openai/chat-stream-text.sse")
 	repl := []byte("data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\ndata: [DONE]\n\n")
 	fz := finalizeFor(t, model.WireOpenAIChat, func(model.StreamSummary) model.Decision {
 		return model.Decision{Action: model.DecisionReplace, Response: &model.Response{Body: repl}}
@@ -237,7 +237,7 @@ func TestFinal_ConsumerSeesTheFramesTheClientGot(t *testing.T) {
 }
 
 func TestFinal_Failures(t *testing.T) {
-	raw, _ := os.ReadFile("../../testkit/testdata/openai/chat-stream-text.sse")
+	raw, _ := os.ReadFile("../fixtures/testdata/openai/chat-stream-text.sse")
 	fz := func() *Finalize { return finalizeFor(t, model.WireOpenAIChat, release) }
 	t.Run("client write error", func(t *testing.T) {
 		res, err := forwardFinal(t, &upScript{bodies: []*http.Response{sseResp(raw, 64)}}, &recWriter{failAt: 1}, fz(), nil)

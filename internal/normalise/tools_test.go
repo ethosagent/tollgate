@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ethosagent/tollgate/internal/fixtures"
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
@@ -131,7 +132,7 @@ func TestAnthropicUsage_ZeroOutputTokensOverridesStart(t *testing.T) {
 func TestEventMapper_FinishSignalsTruncation(t *testing.T) {
 	for _, name := range []string{"openai/chat-stream-text", "anthropic/messages-stream-text"} {
 		w, _ := ForWire(wireOf(name))
-		frames := fx.Chunks(name)
+		frames := fixtures.Chunks(name)
 		t.Run(name+"/complete stream", func(t *testing.T) {
 			m := w.NewEventMapper()
 			feed(t, m, frames)

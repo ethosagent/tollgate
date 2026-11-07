@@ -14,7 +14,7 @@ func summarise(t *testing.T, w model.WireFormat, file string) model.StreamSummar
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile("../../testkit/testdata/" + file)
+	raw, err := os.ReadFile("../fixtures/testdata/" + file)
 	if err != nil {
 		t.Fatal(err)
 	}

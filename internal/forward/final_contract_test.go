@@ -169,7 +169,7 @@ func TestFinal_UsageCountsEveryUpstreamResponse(t *testing.T) {
 // frames a plain tee would deliver: one framer, two paths.
 func FuzzFinalRelease(f *testing.F) {
 	for _, name := range []string{"openai/chat-stream-text.sse", "anthropic/messages-stream-text.sse"} {
-		raw, err := os.ReadFile("../../testkit/testdata/" + name)
+		raw, err := os.ReadFile("../fixtures/testdata/" + name)
 		if err != nil {
 			f.Fatal(err)
 		}

@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/ethosagent/tollgate/internal/fixtures"
 )
 
 // FixtureHeader selects the fixture a FakeUpstream replays for one request,
@@ -100,7 +102,7 @@ func (f *FakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		f.markCanceled(idx)
 		return
 	}
-	w.Header().Set("Content-Type", fixtureContentType(name))
+	w.Header().Set("Content-Type", fixtures.ContentType(name))
 	w.WriteHeader(f.status(name))
 	f.writeChunks(r.Context(), w, idx, chunks)
 }
@@ -130,7 +132,7 @@ func (f *FakeUpstream) status(name string) int {
 	if f.opts.Status != 0 {
 		return f.opts.Status
 	}
-	return fixtureStatus(name)
+	return fixtures.Status(name)
 }
 
 func (f *FakeUpstream) record(r *http.Request, body []byte, name string, found bool) int {
@@ -163,13 +165,13 @@ func defaultFixture(path string, body []byte) string {
 	}
 	_ = json.Unmarshal(body, &req) // a body that is not JSON counts as stream:false
 	switch {
-	case strings.HasSuffix(path, openAIChatPath) && req.Stream:
+	case strings.HasSuffix(path, fixtures.OpenAIChatPath) && req.Stream:
 		return "openai/chat-stream-text"
-	case strings.HasSuffix(path, openAIChatPath):
+	case strings.HasSuffix(path, fixtures.OpenAIChatPath):
 		return "openai/chat"
-	case strings.HasSuffix(path, anthropicMessagesPath) && req.Stream:
+	case strings.HasSuffix(path, fixtures.AnthropicMessagesPath) && req.Stream:
 		return "anthropic/messages-stream-text"
-	case strings.HasSuffix(path, anthropicMessagesPath):
+	case strings.HasSuffix(path, fixtures.AnthropicMessagesPath):
 		return "anthropic/messages"
 	}
 	return ""

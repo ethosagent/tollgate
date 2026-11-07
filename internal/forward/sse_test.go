@@ -86,7 +86,7 @@ func TestScanner_ResetReusesBuffer(t *testing.T) {
 
 func fixtureSeeds(tb testing.TB) [][]byte {
 	tb.Helper()
-	files, err := filepath.Glob("../../testkit/testdata/*/*.sse")
+	files, err := filepath.Glob("../fixtures/testdata/*/*.sse")
 	if err != nil || len(files) == 0 {
 		tb.Fatalf("no SSE fixtures found: %v", err)
 	}

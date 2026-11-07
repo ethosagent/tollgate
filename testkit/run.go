@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethosagent/tollgate"
+	"github.com/ethosagent/tollgate/internal/fixtures"
 )
 
 // runTimeout bounds every wait inside Run, so a stuck plugin fails the test
@@ -64,7 +64,7 @@ func Run(t testing.TB, plugin any, fixtures ...string) *Recording {
 func RunWith(t testing.TB, cfg Config) *Recording {
 	t.Helper()
 	for _, f := range cfg.Fixtures {
-		if Chunks(f) == nil || strings.Contains(f, "/request-") {
+		if !fixtures.IsResponse(f) {
 			t.Fatalf("testkit.Run: unknown fixture %q (see FixtureNames; request- inputs are not responses)", f)
 		}
 	}
@@ -123,7 +123,7 @@ func drive(ctx context.Context, t testing.TB, srv *httptest.Server, p *tollgate.
 
 // send makes one call for fixture fx and reads the whole response.
 func sendFixture(ctx context.Context, srv *httptest.Server, fx string, extra http.Header) (Reply, error) {
-	provider, body := requestFor(fx)
+	provider, body := RequestFor(fx)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, srv.URL+"/"+provider+PathFor(fx), bytes.NewReader(body))
 	if err != nil {
 		return Reply{}, err
@@ -141,18 +141,6 @@ func sendFixture(ctx context.Context, srv *httptest.Server, fx string, extra htt
 	defer resp.Body.Close()
 	b, err := io.ReadAll(resp.Body)
 	return Reply{Fixture: fx, Status: resp.StatusCode, Body: b}, err
-}
-
-// requestFor returns the provider prefix and a request body that matches the
-// fixture: streamed for event-stream fixtures, buffered otherwise.
-func requestFor(fx string) (provider string, body []byte) {
-	stream := fixtureContentType(fx) == "text/event-stream"
-	if strings.HasPrefix(fx, "anthropic/") {
-		return "anthropic", fmt.Appendf(nil,
-			`{"model":"claude-sonnet-4-5","max_tokens":256,"stream":%t,"messages":[{"role":"user","content":"Say hello."}]}`, stream)
-	}
-	return "openai", fmt.Appendf(nil,
-		`{"model":"gpt-4.1-mini","stream":%t,"messages":[{"role":"system","content":"You are a coding agent."},{"role":"user","content":"Say hello."}]}`, stream)
 }
 
 // callsSeen reads the proxy's own count of finished calls from /statusz.

@@ -26,6 +26,11 @@
 // faults. NewServer starts a fake upstream without a testing.TB, for tools
 // such as cmd/tollgate-bench.
 //
-// Dependency law (internal/archtest, rule D6): standard library and the root
-// tollgate package only. It is public API and follows semver.
+// The fixtures are stored in internal/fixtures (a standard-library-only leaf
+// that in-package tests of tollgate's engine can import too); this package is
+// their public API.
+//
+// Dependency law (internal/archtest, rule D6): standard library, the root
+// tollgate package and internal/fixtures only. It is public API and follows
+// semver.
 package testkit

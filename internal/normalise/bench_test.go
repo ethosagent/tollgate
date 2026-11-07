@@ -3,6 +3,7 @@ package normalise
 import (
 	"testing"
 
+	"github.com/ethosagent/tollgate/internal/fixtures"
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
@@ -25,7 +26,7 @@ func BenchmarkParseRequest(b *testing.B) {
 func BenchmarkEventMapper(b *testing.B) {
 	for _, name := range []string{"openai/chat-stream-tools", "anthropic/messages-stream-thinking"} {
 		w, _ := ForWire(wireOf(name))
-		frames := fx.Chunks(name)
+		frames := fixtures.Chunks(name)
 		b.Run(name, func(b *testing.B) {
 			b.ReportAllocs()
 			for i := 0; i < b.N; i++ {

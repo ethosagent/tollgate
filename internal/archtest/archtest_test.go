@@ -32,12 +32,16 @@ func layer(rel string) string {
 		return "model"
 	case rel == "internal/archtest":
 		return "archtest"
+	case rel == "internal/fixtures":
+		return "fixtures"
 	case strings.HasPrefix(rel, "internal/"):
 		return "internal"
 	case rel == "testkit" || strings.HasPrefix(rel, "testkit/"):
 		return "testkit"
 	case rel == "ext" || strings.HasPrefix(rel, "ext/"):
 		return "ext"
+	case rel == "cmd/tollgate-bench":
+		return "tool"
 	case strings.HasPrefix(rel, "cmd/"):
 		return "cmd"
 	}
@@ -56,8 +60,10 @@ var rules = []rule{
 	{"D2", []string{"model"}, isStd, "internal/model is the neutral model: standard library only"},
 	{"D3", []string{"internal"}, either(isStd, isInternal), "internal engine packages never import the root, ext, testkit or cmd"},
 	{"D4", []string{"root"}, either(isStd, isInternal), "the core has no third-party dependencies and never imports ext, testkit or cmd"},
-	{"D5", []string{"ext", "cmd"}, publicOnly, "extensions and the binary use the public API only: never internal/"},
-	{"D6", []string{"testkit"}, either(isStd, isRoot), "testkit depends on the public API and the standard library only"},
+	{"D5", []string{"ext", "cmd"}, both(publicOnly, not(isTestkit)), "extensions and the binary use the public API only: never internal/, and testkit only from tests"},
+	{"D5", []string{"tool"}, publicOnly, "a developer tool uses the public API (testkit included) only: never internal/"},
+	{"D6", []string{"testkit"}, either(isStd, isRoot, isFixtures), "testkit depends on the public API, internal/fixtures and the standard library only"},
+	{"D6", []string{"fixtures"}, isStd, "internal/fixtures is a leaf: standard library only"},
 	{"D6", []string{"archtest"}, isStd, "the architecture gate depends on the standard library only"},
 }
 
@@ -114,6 +120,10 @@ func TestCheck_RejectsKnownBadEdges(t *testing.T) {
 		{"ext", "ext/monitors", module + "/internal/chain", "D5"},
 		{"cmd", "cmd/tollgated", module + "/internal/forward", "D5"},
 		{"testkit", "testkit", module + "/internal/model", "D6"},
+		{"fixtures", "internal/fixtures", module + "/internal/model", "D6"},
+		{"ext", "ext/monitors", module + "/testkit", "D5"},
+		{"cmd", "cmd/tollgated", module + "/testkit", "D5"},
+		{"tool", "cmd/tollgate-bench", module + "/internal/fixtures", "D5"},
 	}
 	for _, b := range bad {
 		got := check(b.layer, b.rel, b.imp)
@@ -127,6 +137,8 @@ func TestCheck_RejectsKnownBadEdges(t *testing.T) {
 		{"ext", "ext/monitors", module},
 		{"cmd", "cmd/tollgated", module + "/ext/monitors"},
 		{"testkit", "testkit", "net/http/httptest"},
+		{"testkit", "testkit", module + "/internal/fixtures"},
+		{"tool", "cmd/tollgate-bench", module + "/testkit"},
 	}
 	for _, g := range good {
 		if got := check(g.layer, g.rel, g.imp); got != "" {
@@ -194,6 +206,16 @@ func isStd(imp string) bool {
 
 func isRoot(imp string) bool     { return imp == module }
 func isInternal(imp string) bool { return strings.HasPrefix(imp, module+"/internal/") }
+func isFixtures(imp string) bool { return imp == module+"/internal/fixtures" }
+func isTestkit(imp string) bool {
+	return imp == module+"/testkit" || strings.HasPrefix(imp, module+"/testkit/")
+}
+
+func not(f func(string) bool) func(string) bool { return func(imp string) bool { return !f(imp) } }
+
+func both(f, g func(string) bool) func(string) bool {
+	return func(imp string) bool { return f(imp) && g(imp) }
+}
 
 func publicOnly(imp string) bool {
 	return isStd(imp) || (strings.HasPrefix(imp, module) && !isInternal(imp))

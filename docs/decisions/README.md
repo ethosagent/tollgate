@@ -18,5 +18,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0011](0011-extensions-with-third-party-dependencies-live-in-nested-modules.md) | Extensions with third-party dependencies live in nested modules | Accepted |
 | [0012](0012-session-header-reaches-the-strategy-as-a-call-field.md) | The session header reaches the SessionStrategy as a Call field | Accepted |
 | [0013](0013-finalizers-see-single-choice-streams.md) | Finalizers see single-choice streams only | Accepted |
+| [0014](0014-fixtures-leaf-and-testkit-harness.md) | Fixtures in a leaf package; testkit's harness imports the root | Accepted |
 
 Template: [`template.md`](template.md).

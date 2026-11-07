@@ -3,6 +3,7 @@ package normalise
 import (
 	"testing"
 
+	"github.com/ethosagent/tollgate/internal/fixtures"
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
@@ -63,7 +64,7 @@ func TestEventMapper_GapSuppressesFalseTruncation(t *testing.T) {
 	for _, name := range []string{"openai/chat-stream-text", "anthropic/messages-stream-text"} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := ForWire(wireOf(name))
-			frames := fx.Chunks(name)
+			frames := fixtures.Chunks(name)
 			m := w.NewEventMapper()
 			feed(t, m, frames[:2])
 			m.Gap(3)
@@ -85,7 +86,7 @@ func TestMapFrame_RecordedMidStreamError(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w, _ := ForWire(wireOf(name))
 			m := w.NewEventMapper()
-			evs := feed(t, m, fx.Chunks(name))
+			evs := feed(t, m, fixtures.Chunks(name))
 			last := evs[len(evs)-1]
 			if fold(evs).Text != "Hel" || last.Kind != model.EventError || last.Err != wantErr {
 				t.Fatalf("events = %+v", evs)

@@ -41,6 +41,7 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 | `internal/resolve/` | Default `ProviderResolver` (path prefix → provider) |
 | `internal/session/` | Default `SessionStrategy` (header-or-predict, TTL sweeper) |
 | `internal/metrics/` | Bounded metric queue + batcher + drop counter |
+| `internal/fixtures/` | Recorded provider fixtures (leaf, stdlib only); re-exported by `testkit` |
 | `internal/archtest/` | The dependency-law gate (protected) |
 | `testkit/` | Public: fake upstream + plugin harness for extension authors |
 | `ext/<area>/<name>/` | Built-in and example extensions (public API only) |
@@ -51,10 +52,10 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 
 - **D1** every package belongs to a layer in `ARCHITECTURE.md`.
 - **D2** `internal/model` → stdlib only.
-- **D3** `internal/*` → stdlib + `internal/*`. Never root, `ext`, `testkit`, `cmd` (`_test.go` files may import `testkit`).
+- **D3** `internal/*` → stdlib + `internal/*`. Never root, `ext`, `testkit`, `cmd`. In-package tests use `internal/fixtures` (importing `testkit` would be a cycle).
 - **D4** root `tollgate` → stdlib + `internal/*`. **No third-party deps in the core.**
-- **D5** `ext/**`, `cmd/**` → public API only. Never `internal/`.
-- **D6** `testkit` → stdlib + root only.
+- **D5** `ext/**`, `cmd/**` → public API only. Never `internal/`; `testkit` only in tests (except the `cmd/tollgate-bench` dev tool).
+- **D6** `testkit` → stdlib + root + `internal/fixtures`; `internal/fixtures` → stdlib only.
 - **D7** third-party imports need an allowlist entry in archtest **and an ADR**.
 - **P1** every package has a doc comment (`doc.go`): read it before the code.
 
@@ -77,7 +78,7 @@ Lint (`.golangci.yml`) bans `http.DefaultClient`/`http.Get`, `log.Print*`,
 | You are adding… | Put it in | Skill |
 |---|---|---|
 | An extension (auth, hook, sink, admission) | `ext/<area>/<name>/` | [`add-extension`](.agents/skills/add-extension/SKILL.md) |
-| A provider wire format | `internal/normalise/<wire>.go` + `testkit` fixtures | [`add-provider`](.agents/skills/add-provider/SKILL.md) |
+| A provider wire format | `internal/normalise/<wire>.go` + `internal/fixtures/testdata` | [`add-provider`](.agents/skills/add-provider/SKILL.md) |
 | An `Options`/`Limits` field | `options.go` + test + `ARCHITECTURE.md` §6 | [`add-option`](.agents/skills/add-option/SKILL.md) |
 | A model type or interface | `internal/model/` + alias in `model.go` | ADR first (it is public API) |
 | A boundary change | `docs/decisions/NNNN-*.md` | [`write-adr`](.agents/skills/write-adr/SKILL.md) |

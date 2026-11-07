@@ -15,7 +15,7 @@ import (
 
 func fixtureBytes(t *testing.T, name string) []byte {
 	t.Helper()
-	b, err := os.ReadFile("../../testkit/testdata/" + name)
+	b, err := os.ReadFile("../fixtures/testdata/" + name)
 	if err != nil {
 		t.Fatal(err)
 	}

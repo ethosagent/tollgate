@@ -37,7 +37,7 @@ func drain(q *FrameQueue) []string {
 }
 
 func TestTee_ClientBytesIdenticalWithAndWithoutConsumer(t *testing.T) {
-	files, _ := filepath.Glob("../../testkit/testdata/*/*.sse")
+	files, _ := filepath.Glob("../fixtures/testdata/*/*.sse")
 	if len(files) == 0 {
 		t.Fatal("no fixtures")
 	}

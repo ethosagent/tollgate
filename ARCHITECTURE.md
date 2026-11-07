@@ -39,6 +39,7 @@ Use these words everywhere. Do not add product-specific terms to the library.
 cmd/tollgated ─┐
 ext/**        ─┼──► tollgate (root: public API) ──► internal/* ──► internal/model
 testkit       ─┘                                       (engine)      (neutral model)
+   └──────────────────────────────────────────────► internal/fixtures (leaf: test data)
 ```
 
 | Layer | Packages | May import | Rule |
@@ -46,15 +47,21 @@ testkit       ─┘                                       (engine)      (neutra
 | model | `internal/model` | stdlib | D2 |
 | internal | `internal/*` (engine) | stdlib, `internal/*` | D3 |
 | root | `tollgate` | stdlib, `internal/*` | D4 |
-| ext, cmd | `ext/**`, `cmd/**` | stdlib, root, `ext/**`, `testkit` (tests), allowlisted third-party | D5 |
-| testkit | `testkit/**` | stdlib, root | D6 |
+| ext, cmd | `ext/**`, `cmd/**` | stdlib, root, `ext/**`, allowlisted third-party; never `testkit` | D5 |
+| tool | `cmd/tollgate-bench` | as ext/cmd, plus `testkit` | D5 |
+| testkit | `testkit/**` | stdlib, root, `internal/fixtures` | D6 |
+| fixtures | `internal/fixtures` | stdlib | D6 |
 | archtest | `internal/archtest` | stdlib | D6 |
 
 D1: a package outside every layer fails the gate. D7: any third-party import
 must be on the archtest allowlist for its layer, added with an ADR. Test
-files: `_test.go` files in any layer may also import `testkit` for fixtures
-and the fake upstream (archtest checks non-test imports only); root tests may
-import `internal/*`. Production code never imports `testkit`.
+files (archtest checks non-test imports only): root, ext, cmd and external
+(`package x_test`) tests may import `testkit`; in-package tests of
+`internal/*` cannot (testkit imports the root: a cycle) and use the
+recorded data in `internal/fixtures`, which testkit re-exports; root tests
+may import `internal/*`. Shipped code never imports `testkit`: the one
+exception is `cmd/tollgate-bench`, a developer tool that is not shipped and
+measures the proxy against testkit's fake upstream (ADR 0014).
 Enforcement: `internal/archtest` (stage `arch`) and `scripts/check-mod.sh`.
 Extensions needing a third-party module are nested modules under `ext/`
 (ADR 0011); archtest `TestNestedModules` applies the ext rules to each,
