@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"io"
 	"net/http"
-	"net/url"
-	"strings"
 )
 
 // nullProxy is the control for -null-proxy: the least a Go reverse proxy can
@@ -14,26 +12,22 @@ import (
 // is its figure minus this one; the rest is the extra loopback hop and
 // scheduling that any proxy pays.
 type nullProxy struct {
-	rt *http.Transport
+	rt     *http.Transport
+	target string // the one upstream URL every call goes to
 }
 
-func newNullProxy(sessions int) *nullProxy {
-	return &nullProxy{rt: &http.Transport{MaxConnsPerHost: 2 * sessions, MaxIdleConnsPerHost: sessions, DisableCompression: true}}
+func newNullProxy(sessions int, target string) *nullProxy {
+	return &nullProxy{target: target,
+		rt: &http.Transport{MaxConnsPerHost: 2 * sessions, MaxIdleConnsPerHost: sessions, DisableCompression: true}}
 }
 
 func (n *nullProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	base, err := url.Parse(r.Header.Get("x-upstream-url"))
-	if err != nil || base.Host == "" {
-		http.Error(w, "null proxy: no upstream", http.StatusBadGateway)
-		return
-	}
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "null proxy: bad body", http.StatusBadRequest)
 		return
 	}
-	_, rest, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/") // drop the provider prefix
-	out, err := http.NewRequestWithContext(r.Context(), r.Method, base.String()+"/"+rest, bytes.NewReader(body))
+	out, err := http.NewRequestWithContext(r.Context(), http.MethodPost, n.target, bytes.NewReader(body))
 	if err != nil {
 		http.Error(w, "null proxy: bad request", http.StatusBadGateway)
 		return

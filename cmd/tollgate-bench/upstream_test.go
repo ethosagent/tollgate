@@ -6,28 +6,29 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/ethosagent/tollgate/testkit"
 )
 
-// TestServeFake_RecordsCrossTheProcessBoundary runs the -upstream-proc child's
-// body in process: it announces its addresses, serves the fixture, reports
-// each call's stamps as wall-clock records, and ends when its stdin closes.
+// TestServeFake_RecordsCrossTheProcessBoundary runs the -serve-fake body in
+// process: it announces its addresses, serves the fixture, reports each
+// call's stamps as wall-clock records, and ends with its context.
 func TestServeFake_RecordsCrossTheProcessBoundary(t *testing.T) {
-	ctx := context.Background()
-	stdinR, stdinW := io.Pipe()
+	ctx, cancel := context.WithCancel(context.Background())
 	outR, outW := io.Pipe()
 	done := make(chan error, 1)
-	go func() { done <- serveFake(ctx, time.Millisecond, stdinR, outW) }()
+	go func() { done <- serveFake(ctx, time.Millisecond, outW) }()
 	line, err := bufio.NewReader(outR).ReadString('\n')
-	f := strings.Fields(line)
-	if err != nil || len(f) != 3 || f[0] != "FAKE" {
+	if err != nil {
 		t.Fatalf("address line %q: %v", line, err)
 	}
-	u := &remoteUpstream{base: f[1], recs: f[2], client: &http.Client{Timeout: 10 * time.Second}}
+	u, err := dialRemoteUpstream(line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer u.stop()
 	const fx = "openai/chat-stream-text"
 	_, body := testkit.RequestFor(fx)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, u.url()+testkit.PathFor(fx), bytes.NewReader(body))
@@ -49,9 +50,20 @@ func TestServeFake_RecordsCrossTheProcessBoundary(t *testing.T) {
 		r.ChunksWritten[0].Before(r.Received) {
 		t.Fatalf("records = %+v, want c1 with every chunk stamped after it was received", recs)
 	}
-	_ = stdinW.Close()
+	cancel()
 	if err := <-done; err != nil {
-		t.Fatalf("serveFake after stdin closed: %v", err)
+		t.Fatalf("serveFake after its context ended: %v", err)
+	}
+}
+
+func TestDialRemoteUpstream_RejectsABadLine(t *testing.T) {
+	for _, spec := range []string{"", "FAKE http://127.0.0.1:1", "http://a b c", "FAKE nohost http://127.0.0.1:2/records"} {
+		if _, err := dialRemoteUpstream(spec); err == nil {
+			t.Errorf("%q was accepted", spec)
+		}
+	}
+	if _, err := dialRemoteUpstream("http://127.0.0.1:1 http://127.0.0.1:2/records"); err != nil {
+		t.Errorf("a line without the FAKE prefix: %v", err)
 	}
 }
 

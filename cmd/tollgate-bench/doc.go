@@ -24,10 +24,14 @@
 //
 // By default everything runs in one process over loopback, so absolute
 // numbers depend on the machine; compare runs on the same machine.
-// -upstream-proc moves the fake upstream into a child process (pinned with
-// -upstream-gomaxprocs; pin this process with the GOMAXPROCS env var), so the
-// fake's goroutines and GC no longer share a scheduler with the proxy; its
-// stamps then cross over as wall-clock times. Dev-only profiles of the timed
+// To keep the fake's goroutines and GC off the proxy's scheduler, run it in
+// another process and pass the line it prints (pin either side with the
+// GOMAXPROCS env var); its stamps then cross over as wall-clock times:
+//
+//	GOMAXPROCS=3 go run ./cmd/tollgate-bench -serve-fake -chunk-delay 20ms
+//	GOMAXPROCS=6 go run ./cmd/tollgate-bench -sessions 200 -upstream "<printed line>"
+//
+// Every pass then uses that fake's chunk delay. Dev-only profiles of the timed
 // pass: -cpuprofile, -memprofile (plus FILE.before for pprof -diff_base),
 // -blockprofile, -mutexprofile; -heapprofile is the live heap while the
 // memory pass holds every proxied stream open. -null-proxy is the control:

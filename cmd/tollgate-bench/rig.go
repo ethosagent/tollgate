@@ -40,14 +40,13 @@ func (benchAuth) Authenticate(context.Context, *http.Request) (tollgate.Tenant, 
 	return tollgate.Tenant{ID: "bench", Policy: &tollgate.Policy{AllowedUpstreams: []string{"127.0.0.0/8"}}}, nil
 }
 
-// newRig starts a fake upstream with the given chunk delay (in a child
-// process with -upstream-proc) and a proxy for cfg.sessions concurrent
-// streams.
+// newRig starts a fake upstream with the given chunk delay (or uses the
+// -upstream one) and a proxy for cfg.sessions concurrent streams.
 func newRig(ctx context.Context, cfg config, chunkDelay time.Duration) (*rig, error) {
 	r := &rig{}
 	sessions := cfg.sessions
-	if cfg.upstreamProc {
-		fake, err := startRemoteUpstream(ctx, chunkDelay, cfg.upstreamProcs)
+	if cfg.upstream != "" { // its chunk delay is the one it was started with
+		fake, err := dialRemoteUpstream(cfg.upstream)
 		if err != nil {
 			return nil, err
 		}
@@ -75,7 +74,7 @@ func newRig(ctx context.Context, cfg config, chunkDelay time.Duration) (*rig, er
 	r.stops = append(r.stops, func() { _ = p.Close(context.WithoutCancel(ctx)) }) // after drops, a second Close is a no-op
 	h := p.Handler()
 	if cfg.nullProxy {
-		np := newNullProxy(sessions)
+		np := newNullProxy(sessions, r.fake.url()+testkit.PathFor(cfg.fixture))
 		r.stops = append(r.stops, np.rt.CloseIdleConnections)
 		h = np
 	}

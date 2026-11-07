@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime"
 	"runtime/pprof"
 )
@@ -43,7 +44,7 @@ func (p profiles) start() (stop func() error, err error) {
 	}
 	var cpu *os.File
 	if p.cpu != "" {
-		if cpu, err = os.Create(p.cpu); err != nil {
+		if cpu, err = os.Create(filepath.Clean(p.cpu)); err != nil {
 			return nil, err
 		}
 		if err = pprof.StartCPUProfile(cpu); err != nil {
@@ -77,7 +78,7 @@ func writeProfile(name, path string) error {
 	if path == "" {
 		return nil
 	}
-	f, err := os.Create(path)
+	f, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return err
 	}

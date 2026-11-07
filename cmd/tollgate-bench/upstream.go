@@ -1,26 +1,22 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
-	"os"
-	"os/exec"
-	"strconv"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/ethosagent/tollgate/testkit"
 )
 
-// upstream is the fake the rig measures against: in this process, or in a
-// child process (-upstream-proc) so its goroutines, GC and scheduler work do
-// not share a runtime with the client and the proxy.
+// upstream is the fake the rig measures against: in this process, or in
+// another one (-serve-fake, then -upstream) so its goroutines, GC and
+// scheduler work do not share a runtime with the client and the proxy.
 type upstream interface {
 	url() string
 	// records returns, by call id, what the fake recorded for each call.
@@ -62,55 +58,32 @@ type record struct {
 	Chunks   []int64 `json:"chunks"`
 }
 
-// remoteUpstream is a fake in a child process started by this binary.
+// remoteUpstream is a fake in another process: one started with
+// -serve-fake, whose address line is passed as -upstream.
 type remoteUpstream struct {
-	cmd        *exec.Cmd
-	stdin      io.Closer
 	base, recs string
 	client     *http.Client
 }
 
-// startRemoteUpstream re-executes this binary in fake mode with GOMAXPROCS
-// procs (0 leaves the runtime default) and waits for its address line.
-func startRemoteUpstream(ctx context.Context, chunkDelay time.Duration, procs int) (*remoteUpstream, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, err
+// dialRemoteUpstream parses an address line ("<fake url> <records url>",
+// optionally prefixed with FAKE) as -serve-fake prints it.
+func dialRemoteUpstream(spec string) (*remoteUpstream, error) {
+	f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(spec), "FAKE"))
+	if len(f) != 2 {
+		return nil, fmt.Errorf("-upstream %q: want \"<fake url> <records url>\" as -serve-fake prints it", spec)
 	}
-	cmd := exec.CommandContext(ctx, exe, "-serve-fake", "-chunk-delay", chunkDelay.String())
-	cmd.Env = os.Environ()
-	if procs > 0 {
-		cmd.Env = append(cmd.Env, "GOMAXPROCS="+strconv.Itoa(procs))
+	for _, raw := range f {
+		if u, err := url.Parse(raw); err != nil || u.Host == "" {
+			return nil, fmt.Errorf("-upstream: bad URL %q", raw)
+		}
 	}
-	cmd.Stderr = os.Stderr
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	if err := cmd.Start(); err != nil {
-		return nil, err
-	}
-	u := &remoteUpstream{cmd: cmd, stdin: stdin, client: &http.Client{Timeout: 30 * time.Second}}
-	line, err := bufio.NewReader(stdout).ReadString('\n')
-	if f := strings.Fields(line); err == nil && len(f) == 3 && f[0] == "FAKE" {
-		u.base, u.recs = f[1], f[2]
-		return u, nil
-	}
-	u.stop()
-	return nil, fmt.Errorf("fake upstream process: bad address line %q: %w", line, err)
+	return &remoteUpstream{base: f[0], recs: f[1], client: &http.Client{Timeout: 30 * time.Second}}, nil
 }
 
 func (u *remoteUpstream) url() string { return u.base }
 
-// stop closes the child's stdin, which ends it, and reaps it.
-func (u *remoteUpstream) stop() {
-	_ = u.stdin.Close()
-	_ = u.cmd.Wait()
-}
+// stop leaves the other process running: whoever started it ends it.
+func (u *remoteUpstream) stop() { u.client.CloseIdleConnections() }
 
 func (u *remoteUpstream) records(ctx context.Context) (map[string]testkit.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.recs, nil)
@@ -137,10 +110,10 @@ func (u *remoteUpstream) records(ctx context.Context) (map[string]testkit.Reques
 	return out, nil
 }
 
-// serveFake is the child process: a testkit fake plus a records endpoint on
-// loopback. It prints "FAKE <fake url> <records url>" and serves until its
-// stdin closes.
-func serveFake(ctx context.Context, chunkDelay time.Duration, stdin io.Reader, out io.Writer) error {
+// serveFake is the -serve-fake process: a testkit fake plus a records
+// endpoint on loopback. It prints "FAKE <fake url> <records url>" (the value
+// for -upstream) and serves until ctx ends (Ctrl-C).
+func serveFake(ctx context.Context, chunkDelay time.Duration, out io.Writer) error {
 	fake, stop := testkit.NewServer(testkit.Options{ChunkDelay: chunkDelay})
 	defer stop()
 	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
@@ -156,11 +129,8 @@ func serveFake(ctx context.Context, chunkDelay time.Duration, stdin io.Reader, o
 	if _, err := fmt.Fprintf(out, "FAKE %s http://%s/records\n", fake.URL, ln.Addr()); err != nil {
 		return err
 	}
-	_, err = io.Copy(io.Discard, stdin) // the parent closes stdin (or dies) to end the child
-	if errors.Is(err, os.ErrClosed) {
-		err = nil
-	}
-	return err
+	<-ctx.Done()
+	return nil
 }
 
 func recordsOf(reqs []testkit.Request) []record {

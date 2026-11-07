@@ -29,6 +29,9 @@ func memoryPass(ctx context.Context, cfg config) (memory, error) {
 	}
 	defer r.stop()
 	m := memory{HoldChunkDelay: hold.String()}
+	if cfg.upstream != "" {
+		m.HoldChunkDelay = "that of -upstream" // another process's fake keeps its own delay
+	}
 	direct, err := held(ctx, cfg, r.directTarget(cfg.fixture), "mem-d")
 	if err != nil {
 		return m, err
