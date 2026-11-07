@@ -112,7 +112,7 @@ func measure(ctx context.Context, cfg config) (report, error) {
 	if err != nil {
 		return report{}, err
 	}
-	up, err := r.upstreamSide(ctx)
+	up, bound, err := r.upstreamSide(ctx)
 	if err != nil {
 		return report{}, err
 	}
@@ -130,6 +130,7 @@ func measure(ctx context.Context, cfg config) (report, error) {
 		Direct: latencyOf(t.directTTFB, t.directTotal), Proxy: latencyOf(t.proxyTTFB, t.proxyTotal),
 		Overhead: overheadOf(t), PeakStreams: l.peak.Load(), Statusz: drops,
 		UpstreamProc: cfg.upstream != "", NullProxy: cfg.nullProxy, GOMAXPROCS: runtime.GOMAXPROCS(0),
+		ClockBoundMs: ms(bound),
 	}, nil
 }
 

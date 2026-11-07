@@ -75,6 +75,10 @@ type report struct {
 	UpstreamProc    bool         `json:"upstream_proc"` // the fake ran in its own process
 	NullProxy       bool         `json:"null_proxy"`    // control run: tollgate replaced by a minimal relay
 	GOMAXPROCS      int          `json:"gomaxprocs"`    // of the client+proxy process
+	// ClockBoundMs bounds the error of mapping the fake's clock onto the
+	// client's. The added figures cancel it (each leg has it once with each
+	// sign); only forward_* carries it.
+	ClockBoundMs float64 `json:"upstream_clock_bound_ms"`
 }
 
 // percentile is the nearest-rank percentile (p in 0..1) of ds; 0 for none.
@@ -127,7 +131,7 @@ func writeTable(w io.Writer, r report) error {
 	pr("\nadded by the proxy (ms, paired, upstream-stamped)  p50 / p99\n")
 	pr("  time to first byte   %8.3f / %8.3f   (%d pairs)\n", o.TTFBAddedP50, o.TTFBAddedP99, o.Pairs)
 	pr("  per chunk            %8.3f / %8.3f   (%d chunks)\n", o.ChunkAddedP50, o.ChunkAddedP99, o.Chunks)
-	pr("  request forward      %8.3f / %8.3f\n", o.ForwardP50, o.ForwardP99)
+	pr("  request forward      %8.3f / %8.3f   (± %.3f fake clock mapping)\n", o.ForwardP50, o.ForwardP99, r.ClockBoundMs)
 	pr("  v1 target (added p99 < 1 ms): %t\n", o.MeetsV1)
 	m := r.Memory
 	pr("\nbytes per open stream (hold %s): direct %.0f (%d streams), proxy %.0f (%d streams), added %.0f\n",

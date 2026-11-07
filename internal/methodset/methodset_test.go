@@ -38,10 +38,14 @@ type other struct{}
 
 func (other) M() {}
 
+// ambiguous has M from two embeds; the compiler hides it, so it is not
+// provably base's. N comes from base alone.
 type ambiguous struct {
 	base
 	other
 }
+
+var _ = ambiguous{other: other{}}
 
 type noBase struct{}
 

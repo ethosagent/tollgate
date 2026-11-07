@@ -4,143 +4,168 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net"
+	"math"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/ethosagent/tollgate/testkit"
 )
 
-// upstream is the fake the rig measures against: in this process, or in
-// another one (-serve-fake, then -upstream) so its goroutines, GC and
-// scheduler work do not share a runtime with the client and the proxy.
+// syncProbes is how many clock reads sync takes; the one with the shortest
+// round trip bounds the mapping error.
+const syncProbes = 16
+
+// upstream is the fake the rig measures against.
 type upstream interface {
 	url() string
-	// records returns, by call id, what the fake recorded for each call.
-	records(ctx context.Context) (map[string]testkit.Request, error)
+	// records returns, by call id, what the fake recorded for each call, on
+	// this process's monotonic clock, and the bound on that mapping's error.
+	records(ctx context.Context) (map[string]testkit.Request, time.Duration, error)
 	stop()
 }
 
-// localUpstream is a testkit fake in this process.
-type localUpstream struct {
-	fake  *testkit.FakeUpstream
-	close func()
+// fakeClient reaches a testkit fake plus its control server (records,
+// clock). The fake runs in this process by default or in another one
+// (-serve-fake, then -upstream) so its goroutines, GC and scheduler work do
+// not share a runtime with the client and the proxy; both are reached the
+// same way.
+type fakeClient struct {
+	base   string // the fake
+	port   int    // its control server's, on loopback
+	client *http.Client
+	close  func() // stops an in-process fake; nil for another process's
 }
 
-func newLocalUpstream(chunkDelay time.Duration) *localUpstream {
-	fake, stop := testkit.NewServer(testkit.Options{ChunkDelay: chunkDelay})
-	return &localUpstream{fake: fake, close: stop}
-}
-
-func (u *localUpstream) url() string { return u.fake.URL }
-func (u *localUpstream) stop()       { u.close() }
-
-func (u *localUpstream) records(context.Context) (map[string]testkit.Request, error) {
-	return byCallID(u.fake.Requests()), nil
-}
-
-func byCallID(reqs []testkit.Request) map[string]testkit.Request {
-	out := make(map[string]testkit.Request, len(reqs))
-	for _, q := range reqs {
-		out[q.Header.Get(callHeader)] = q
+// connectUpstream dials the fake of another process (spec, the line it
+// printed; its chunk delay is the one it was started with) or, with no spec,
+// starts one in this process.
+func connectUpstream(ctx context.Context, spec string, chunkDelay time.Duration) (upstream, error) {
+	if spec != "" {
+		return dialUpstream(spec)
 	}
-	return out
+	return startLocalUpstream(ctx, chunkDelay)
 }
 
-// record is one fake-side call on the wire between the processes. Stamps
-// are wall-clock Unix nanoseconds: both processes read the same host clock.
-type record struct {
-	ID       string  `json:"id"`
-	Received int64   `json:"received"`
-	Chunks   []int64 `json:"chunks"`
+// startLocalUpstream runs the fake in this process; it is reached exactly as
+// another process's would be.
+func startLocalUpstream(ctx context.Context, chunkDelay time.Duration) (*fakeClient, error) {
+	f, err := startFake(ctx, chunkDelay)
+	if err != nil {
+		return nil, err
+	}
+	u := newUpstream(f.fake.URL, f.port)
+	u.close = f.stop
+	return u, nil
 }
 
-// remoteUpstream is a fake in another process: one started with
-// -serve-fake, whose address line is passed as -upstream.
-type remoteUpstream struct {
-	base, recs string
-	client     *http.Client
-}
-
-// dialRemoteUpstream parses an address line ("<fake url> <records url>",
-// optionally prefixed with FAKE) as -serve-fake prints it.
-func dialRemoteUpstream(spec string) (*remoteUpstream, error) {
+// dialUpstream parses an address line ("<fake url> <control port>",
+// optionally prefixed with FAKE) as -serve-fake prints it. The control server
+// is always on loopback, so only its port crosses over.
+func dialUpstream(spec string) (*fakeClient, error) {
 	f := strings.Fields(strings.TrimPrefix(strings.TrimSpace(spec), "FAKE"))
 	if len(f) != 2 {
-		return nil, fmt.Errorf("-upstream %q: want \"<fake url> <records url>\" as -serve-fake prints it", spec)
+		return nil, fmt.Errorf("-upstream %q: want \"<fake url> <control port>\" as -serve-fake prints it", spec)
 	}
-	for _, raw := range f {
-		if u, err := url.Parse(raw); err != nil || u.Host == "" {
-			return nil, fmt.Errorf("-upstream: bad URL %q", raw)
-		}
+	if u, err := url.Parse(f[0]); err != nil || u.Host == "" {
+		return nil, fmt.Errorf("-upstream: bad URL %q", f[0])
 	}
-	return &remoteUpstream{base: f[0], recs: f[1], client: &http.Client{Timeout: 30 * time.Second}}, nil
+	port, err := strconv.ParseUint(f[1], 10, 16)
+	if err != nil || port == 0 {
+		return nil, fmt.Errorf("-upstream: bad control port %q", f[1])
+	}
+	return newUpstream(f[0], int(port)), nil
 }
 
-func (u *remoteUpstream) url() string { return u.base }
+func newUpstream(base string, controlPort int) *fakeClient {
+	return &fakeClient{base: base, port: controlPort, client: &http.Client{Timeout: 30 * time.Second}}
+}
 
-// stop leaves the other process running: whoever started it ends it.
-func (u *remoteUpstream) stop() { u.client.CloseIdleConnections() }
+// control is the URL of one of the control server's endpoints.
+func (u *fakeClient) control(endpoint string) string {
+	return "http://127.0.0.1:" + strconv.Itoa(u.port) + "/" + endpoint
+}
 
-func (u *remoteUpstream) records(ctx context.Context) (map[string]testkit.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.recs, nil)
+func (u *fakeClient) url() string { return u.base }
+
+// stop ends an in-process fake; another process's keeps running, since
+// whoever started it ends it.
+func (u *fakeClient) stop() {
+	u.client.CloseIdleConnections()
+	if u.close != nil {
+		u.close()
+	}
+}
+
+// records returns, by call id, what the fake recorded for each call, with
+// its stamps mapped onto this process's monotonic clock (see sync); bound
+// is the mapping's worst-case error.
+func (u *fakeClient) records(ctx context.Context) (out map[string]testkit.Request, bound time.Duration, err error) {
+	origin, bound, err := u.sync(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	resp, err := u.client.Do(req)
+	recs, err := u.readRecords(ctx)
 	if err != nil {
-		return nil, err
+		return nil, 0, fmt.Errorf("fake records: %w", err)
 	}
-	defer resp.Body.Close()
-	var recs []record
-	if err := json.NewDecoder(resp.Body).Decode(&recs); err != nil {
-		return nil, fmt.Errorf("fake records: %w", err)
-	}
-	out := make(map[string]testkit.Request, len(recs))
+	out = make(map[string]testkit.Request, len(recs))
 	for _, r := range recs {
-		q := testkit.Request{Received: time.Unix(0, r.Received)}
+		q := testkit.Request{Received: origin.Add(time.Duration(r.Received))}
 		for _, c := range r.Chunks {
-			q.ChunksWritten = append(q.ChunksWritten, time.Unix(0, c))
+			q.ChunksWritten = append(q.ChunksWritten, origin.Add(time.Duration(c)))
 		}
 		out[r.ID] = q
 	}
-	return out, nil
+	return out, bound, nil
 }
 
-// serveFake is the -serve-fake process: a testkit fake plus a records
-// endpoint on loopback. It prints "FAKE <fake url> <records url>" (the value
-// for -upstream) and serves until ctx ends (Ctrl-C).
-func serveFake(ctx context.Context, chunkDelay time.Duration, out io.Writer) error {
-	fake, stop := testkit.NewServer(testkit.Options{ChunkDelay: chunkDelay})
-	defer stop()
-	ln, err := (&net.ListenConfig{}).Listen(ctx, "tcp", "127.0.0.1:0")
+// sync finds the fake's clock origin on this process's monotonic clock. The
+// fake stamps durations since its own origin (monotonic, so no NTP step can
+// move them); each probe reads the fake's clock between two local reads and
+// places it at their midpoint. The probe with the shortest round trip wins,
+// and half of that round trip bounds the error. Both clocks tick at the same
+// rate (one host), so one offset holds for the whole run.
+func (u *fakeClient) sync(ctx context.Context) (origin time.Time, bound time.Duration, err error) {
+	best := time.Duration(math.MaxInt64)
+	for range syncProbes {
+		t0 := time.Now()
+		now, err := u.readClock(ctx)
+		if err != nil {
+			return time.Time{}, 0, fmt.Errorf("fake clock: %w", err)
+		}
+		if rtt := time.Since(t0); rtt < best {
+			best, origin = rtt, t0.Add(rtt/2-time.Duration(now))
+		}
+	}
+	return origin, best / 2, nil
+}
+
+// readClock returns the fake's clock: nanoseconds since its origin.
+func (u *fakeClient) readClock(ctx context.Context) (now int64, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.control("clock"), nil)
+	if err != nil {
+		return 0, err
+	}
+	return now, u.decode(req, &now)
+}
+
+// readRecords returns what the fake recorded, on its own clock.
+func (u *fakeClient) readRecords(ctx context.Context) (recs []record, err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.control("records"), nil)
+	if err != nil {
+		return nil, err
+	}
+	return recs, u.decode(req, &recs)
+}
+
+func (u *fakeClient) decode(req *http.Request, v any) error {
+	resp, err := u.client.Do(req)
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(recordsOf(fake.Requests()))
-	}), ReadHeaderTimeout: 10 * time.Second}
-	go func() { _ = srv.Serve(ln) }() // ends with srv.Close below
-	defer srv.Close()
-	if _, err := fmt.Fprintf(out, "FAKE %s http://%s/records\n", fake.URL, ln.Addr()); err != nil {
-		return err
-	}
-	<-ctx.Done()
-	return nil
-}
-
-func recordsOf(reqs []testkit.Request) []record {
-	out := make([]record, 0, len(reqs))
-	for _, q := range reqs {
-		r := record{ID: q.Header.Get(callHeader), Received: q.Received.UnixNano()}
-		for _, c := range q.ChunksWritten {
-			r.Chunks = append(r.Chunks, c.UnixNano())
-		}
-		out = append(out, r)
-	}
-	return out
+	defer resp.Body.Close()
+	return json.NewDecoder(resp.Body).Decode(v)
 }

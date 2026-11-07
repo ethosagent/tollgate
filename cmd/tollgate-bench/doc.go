@@ -26,7 +26,12 @@
 // numbers depend on the machine; compare runs on the same machine.
 // To keep the fake's goroutines and GC off the proxy's scheduler, run it in
 // another process and pass the line it prints (pin either side with the
-// GOMAXPROCS env var); its stamps then cross over as wall-clock times:
+// GOMAXPROCS env var). Either way the fake is reached over its control
+// server: it stamps durations on its own monotonic clock, and the rig maps
+// them onto its own by a minimum-round-trip clock sync over loopback. The
+// added figures cancel that mapping's error; forward_* carries it, and the
+// report gives its bound (upstream_clock_bound_ms). No wall clock is read,
+// so an NTP step cannot skew a run:
 //
 //	GOMAXPROCS=3 go run ./cmd/tollgate-bench -serve-fake -chunk-delay 20ms
 //	GOMAXPROCS=6 go run ./cmd/tollgate-bench -sessions 200 -upstream "<printed line>"

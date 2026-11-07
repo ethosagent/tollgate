@@ -45,15 +45,11 @@ func (benchAuth) Authenticate(context.Context, *http.Request) (tollgate.Tenant, 
 func newRig(ctx context.Context, cfg config, chunkDelay time.Duration) (*rig, error) {
 	r := &rig{}
 	sessions := cfg.sessions
-	if cfg.upstream != "" { // its chunk delay is the one it was started with
-		fake, err := dialRemoteUpstream(cfg.upstream)
-		if err != nil {
-			return nil, err
-		}
-		r.fake = fake
-	} else {
-		r.fake = newLocalUpstream(chunkDelay)
+	fake, err := connectUpstream(ctx, cfg.upstream, chunkDelay)
+	if err != nil {
+		return nil, err
 	}
+	r.fake = fake
 	r.stops = append(r.stops, r.fake.stop)
 	// The default MaxConnsPerHost (100) would queue calls and measure the cap,
 	// not the proxy: give every session its own upstream connection.
@@ -134,8 +130,9 @@ func (r *rig) proxyTarget(fixture string) target {
 	}}
 }
 
-// upstreamSide returns, by call id, what the fake recorded for each call.
-func (r *rig) upstreamSide(ctx context.Context) (map[string]testkit.Request, error) {
+// upstreamSide returns, by call id, what the fake recorded for each call, on
+// this process's clock, and the bound on that clock mapping's error.
+func (r *rig) upstreamSide(ctx context.Context) (map[string]testkit.Request, time.Duration, error) {
 	return r.fake.records(ctx)
 }
 
