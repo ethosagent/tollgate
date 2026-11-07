@@ -20,9 +20,16 @@ type EventMapper interface {
 	// Frame maps one SSE frame (event name, joined data lines). Unknown event
 	// types yield no events and no error; malformed JSON yields an error.
 	Frame(event string, data []byte) ([]model.Event, error)
+	// Gap tells the mapper that n frames were dropped before the next one
+	// (forward.FrameQueue reports it). The mapper keeps its state, but it can
+	// no longer tell a truncated stream from a dropped finish frame, so
+	// Finish then reports no truncation: the consumer takes the ending from
+	// the queue's End.Finish instead.
+	Gap(n int64)
 	// Finish signals end of stream and returns any closing events: a single
-	// EventError when frames were seen but the stream ended before a finish
-	// reason (truncation). It is idempotent; later calls return nil.
+	// EventError when frames were seen, no gap was reported, and the stream
+	// ended before a finish reason (truncation). It is idempotent; later
+	// calls return nil.
 	Finish() []model.Event
 }
 
@@ -49,8 +56,16 @@ func ForWire(f model.WireFormat) (Wire, error) {
 	return nil, fmt.Errorf("%w: %q", ErrUnsupportedWire, f)
 }
 
-// strictDecode is json.Unmarshal that also rejects an empty body.
+// decodeObserver, when set by a test, runs on every strictDecode so tests can
+// prove a body is decoded exactly once (HOT-4). Production leaves it nil.
+var decodeObserver func()
+
+// strictDecode is json.Unmarshal that also rejects an empty body. Every
+// whole-body or whole-frame decode in this package goes through it.
 func strictDecode(data []byte, v any) error {
+	if decodeObserver != nil {
+		decodeObserver()
+	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		return errors.New("normalise: empty JSON body")
 	}

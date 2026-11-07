@@ -1,0 +1,6 @@
+data: {"id":"chatcmpl-fixture004","object":"chat.completion.chunk","created":1762500000,"model":"gpt-4.1-mini","choices":[{"index":0,"delta":{"role":"assistant","content":""},"finish_reason":null}]}
+
+data: {"id":"chatcmpl-fixture004","object":"chat.completion.chunk","created":1762500000,"model":"gpt-4.1-mini","choices":[{"index":0,"delta":{"content":"Hel"},"finish_reason":null}]}
+
+data: {"error":{"message":"The server had an error while processing your request.","type":"server_error","param":null,"code":null}}
+

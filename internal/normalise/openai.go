@@ -43,6 +43,7 @@ type oaError struct {
 // oaChunk is one chat.completion.chunk (choices carry a delta).
 type oaChunk struct {
 	Choices []struct {
+		Index        int     `json:"index"`
 		Delta        oaDelta `json:"delta"`
 		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
@@ -53,6 +54,7 @@ type oaChunk struct {
 // oaBody is a complete chat.completion (choices carry a message).
 type oaBody struct {
 	Choices []struct {
+		Index        int     `json:"index"`
 		Message      oaDelta `json:"message"`
 		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
@@ -95,7 +97,7 @@ func (m *openAIMapper) Frame(_ string, data []byte) ([]model.Event, error) {
 	}
 	for i := range m.chunk.Choices {
 		c := &m.chunk.Choices[i]
-		out = c.Delta.appendEvents(out, &m.tools)
+		out = c.Delta.appendEvents(out, &m.tools, c.Index)
 		if c.FinishReason != "" {
 			out = append(out, finishEv(c.FinishReason))
 		}
@@ -108,6 +110,9 @@ func (m *openAIMapper) Frame(_ string, data []byte) ([]model.Event, error) {
 
 // Finish reports a stream that ended without a finish reason.
 func (m *openAIMapper) Finish() []model.Event { return m.state.end() }
+
+// Gap records dropped frames; see EventMapper.Gap.
+func (m *openAIMapper) Gap(n int64) { m.state.gap(n) }
 
 // MapBody maps a complete chat.completion body. Bodies carry no tool-call
 // index, so tool calls are keyed by their position in the message.
@@ -126,7 +131,7 @@ func (w openAIWire) MapBody(body []byte) ([]model.Event, error) {
 		for j := range c.Message.ToolCalls {
 			c.Message.ToolCalls[j].Index = j
 		}
-		out = c.Message.appendEvents(out, &tools)
+		out = c.Message.appendEvents(out, &tools, i) // position: bodies may omit index
 		if c.FinishReason != "" {
 			out = append(out, finishEv(c.FinishReason))
 		}
@@ -137,9 +142,11 @@ func (w openAIWire) MapBody(body []byte) ([]model.Event, error) {
 	return out, nil
 }
 
-// appendEvents flattens a delta or message. Tool-call indexes go through
-// tools, so they are dense 0-based ordinals whatever the upstream numbering.
-func (d *oaDelta) appendEvents(out []model.Event, tools *toolOrdinals) []model.Event {
+// appendEvents flattens a delta or message of one choice. Tool-call indexes
+// go through tools keyed by (choice, tool index), so they are dense 0-based
+// ordinals whatever the upstream numbering, and two choices (n>1) that both
+// use tool index 0 stay two tool calls.
+func (d *oaDelta) appendEvents(out []model.Event, tools *toolOrdinals, choice int) []model.Event {
 	if d.ReasoningContent != "" {
 		out = append(out, reasoningEv(d.ReasoningContent))
 	}
@@ -148,10 +155,14 @@ func (d *oaDelta) appendEvents(out []model.Event, tools *toolOrdinals) []model.E
 	}
 	for i := range d.ToolCalls {
 		tc := &d.ToolCalls[i]
-		out = append(out, toolEv(tools.assign(tc.Index), tc.ID, tc.Function.Name, tc.Function.Arguments))
+		out = append(out, toolEv(tools.assign(choiceToolKey(choice, tc.Index)), tc.ID, tc.Function.Name, tc.Function.Arguments))
 	}
 	return out
 }
+
+// choiceToolKey packs a choice index and a per-choice tool index into one
+// ordinal key (16 bits each, so it fits a 32-bit int).
+func choiceToolKey(choice, tool int) int { return choice<<16 | tool&0xffff }
 
 // rawArguments turns a provider arguments string into RawMessage (nil if empty).
 func rawArguments(s string) json.RawMessage {

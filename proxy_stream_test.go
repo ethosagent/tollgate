@@ -112,10 +112,12 @@ func TestProxy_UpstreamFailures(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			logs := &syncBuf{}
+			tt.opts.Logger = slog.New(slog.NewTextHandler(logs, nil))
 			base := newProxyServer(t, tt.opts)
 			resp := post(t, base, "/anthropic/v1/messages", []byte(`{}`), tt.hdr)
 			if resp.StatusCode != tt.want {
-				t.Fatalf("status=%d, want %d", resp.StatusCode, tt.want)
+				t.Fatalf("status=%d, want %d; log %s", resp.StatusCode, tt.want, logs.String())
 			}
 			body := errorBody(t, resp)
 			if resp.StatusCode != tt.want || body["type"] != "error" {

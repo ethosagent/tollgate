@@ -51,7 +51,14 @@ func (t *toolOrdinals) lookup(key int) (int, bool) {
 // streamState is what Finish needs: did frames produce events, and did a
 // finish reason arrive.
 type streamState struct {
-	seen, finished, closed bool
+	seen, finished, closed, gapped bool
+}
+
+// gap records that frames were dropped (EventMapper.Gap).
+func (s *streamState) gap(n int64) {
+	if n > 0 {
+		s.gapped = true
+	}
 }
 
 func (s *streamState) observe(evs []model.Event) []model.Event {
@@ -70,7 +77,7 @@ func (s *streamState) end() []model.Event {
 		return nil
 	}
 	s.closed = true
-	if s.seen && !s.finished {
+	if s.seen && !s.finished && !s.gapped {
 		return []model.Event{errorEvent("stream ended before a finish reason")}
 	}
 	return nil

@@ -138,6 +138,9 @@ func (m *anthropicMapper) dispatch() []model.Event {
 // Finish reports a stream that ended without a finish reason.
 func (m *anthropicMapper) Finish() []model.Event { return m.state.end() }
 
+// Gap records dropped frames; see EventMapper.Gap.
+func (m *anthropicMapper) Gap(n int64) { m.state.gap(n) }
+
 func (m *anthropicMapper) mergeUsage(out []model.Event, u *anUsage) []model.Event {
 	m.usage = mergeUsage(m.usage, u)
 	return append(out, usageEvent(m.usage))
