@@ -1,0 +1,5 @@
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":1,"CachedInputTokens":0,"ReasoningTokens":0}}
+{"kind":"text","text":"Hello"}
+{"kind":"text","text":" world"}
+{"kind":"finish","finish":"end_turn"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":2,"CachedInputTokens":0,"ReasoningTokens":0}}

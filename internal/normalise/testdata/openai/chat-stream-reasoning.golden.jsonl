@@ -1,0 +1,4 @@
+{"kind":"reasoning","text":"The user wants a greeting."}
+{"kind":"text","text":"Hello"}
+{"kind":"finish","finish":"stop"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":9,"CachedInputTokens":0,"ReasoningTokens":6}}

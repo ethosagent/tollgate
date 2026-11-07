@@ -1,0 +1,5 @@
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":1,"CachedInputTokens":0,"ReasoningTokens":0}}
+{"kind":"reasoning","text":"The user wants a greeting."}
+{"kind":"text","text":"Hello"}
+{"kind":"finish","finish":"end_turn"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":9,"CachedInputTokens":0,"ReasoningTokens":0}}

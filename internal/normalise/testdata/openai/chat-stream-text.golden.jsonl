@@ -1,0 +1,4 @@
+{"kind":"text","text":"Hello"}
+{"kind":"text","text":" world"}
+{"kind":"finish","finish":"stop"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":2,"CachedInputTokens":0,"ReasoningTokens":0}}

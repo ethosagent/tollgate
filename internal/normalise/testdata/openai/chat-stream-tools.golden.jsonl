@@ -1,0 +1,5 @@
+{"kind":"tool_call","tool_call":{"Index":0,"ID":"call_fixture001","Name":"get_weather","Arguments":""}}
+{"kind":"tool_call","tool_call":{"Index":0,"ID":"","Name":"","Arguments":"{\"city\":"}}
+{"kind":"tool_call","tool_call":{"Index":0,"ID":"","Name":"","Arguments":"\"Paris\"}"}}
+{"kind":"finish","finish":"tool_calls"}
+{"kind":"usage","usage":{"InputTokens":40,"OutputTokens":11,"CachedInputTokens":0,"ReasoningTokens":0}}
