@@ -16,13 +16,12 @@ type HookCounts struct {
 	DroppedEvents       int64 // SSE frames that never reached OnEvent
 }
 
-// Report is everything /metrics exposes. HasQueue is false when no metric
-// sink is configured; the sink families are then omitted.
+// Report is everything /metrics exposes. Queue is nil when no metric sink
+// is configured; the sink families are then omitted.
 type Report struct {
 	Snapshot Snapshot
 	InFlight int64
-	Queue    Stats
-	HasQueue bool
+	Queue    *Stats
 	Hooks    HookCounts
 }
 
@@ -54,8 +53,8 @@ func WriteProm(w io.Writer, r Report) error {
 	p.family("tollgate_hook_skips_total", "counter", "Hook work given up on, by reason.")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UnbufferedResponses), "reason", "unbuffered_response")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.DroppedEvents), "reason", "dropped_event")
-	if r.HasQueue {
-		p.queue(r.Queue)
+	if r.Queue != nil {
+		p.queue(*r.Queue)
 	}
 	if p.err != nil {
 		return p.err

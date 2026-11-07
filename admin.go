@@ -8,35 +8,40 @@ import (
 	"github.com/ethosagent/tollgate/internal/metrics"
 )
 
-// initMetrics prepares the metric queue when the host configured a sink. With
-// the default DiscardSink nothing is prepared and calls do no metric work
-// until AdminHandler is used. The queue's goroutine starts with the first
-// metric (ensureQueue), so New needs no context and a proxy that never serves
-// starts nothing.
+// initMetrics creates the metric queue when the host configured a sink.
+// With the default DiscardSink nothing is created and calls do no metric
+// work until AdminHandler is used. The queue's writer starts in Start, so
+// New starts no goroutine.
 func (p *Proxy) initMetrics() {
 	switch p.opts.Metrics.(type) {
 	case DiscardSink, *DiscardSink:
 		return
 	}
 	l := p.opts.Limits
-	p.qcfg = &metrics.Config{Sink: p.opts.Metrics, Queue: l.MetricQueue, Batch: l.MetricBatch, Interval: l.MetricFlushInterval}
+	p.queue = metrics.New(metrics.Config{Sink: p.opts.Metrics, Queue: l.MetricQueue, Batch: l.MetricBatch,
+		Interval: l.MetricFlushInterval, WriteTimeout: l.MetricWriteTimeout, FailAfter: l.MetricFailAfter})
 	p.enableRegistry()
 }
 
-// ensureQueue returns the metric queue, starting it on first use. It returns
-// nil without a sink or after Close.
-func (p *Proxy) ensureQueue(ctx context.Context) *metrics.Queue {
-	if q := p.queue.Load(); q != nil || p.qcfg == nil {
-		return q
+// ErrClosed is returned by Start after Close.
+var ErrClosed = errors.New("tollgate: proxy is closed")
+
+// Start starts the Proxy's background work: the metric writer that batches
+// every call's Metric to Options.Metrics. Call it once before serving and
+// Close when done; with the default DiscardSink it does nothing. Until it
+// runs, metrics wait in the bounded queue (overflow drops and counts) and
+// /readyz answers 503, so a host that forgets it is told. ctx's values reach
+// every MetricSink.Write; its cancellation does not stop the writer (Close
+// does, after flushing), so a host may pass its signal context. Further
+// calls do nothing; after Close it returns ErrClosed.
+func (p *Proxy) Start(ctx context.Context) error {
+	if p.closed.Load() {
+		return ErrClosed
 	}
-	p.qmu.Lock()
-	defer p.qmu.Unlock()
-	if q := p.queue.Load(); q != nil || p.qclosed {
-		return q
+	if p.queue != nil {
+		p.queue.Start(ctx)
 	}
-	q := metrics.New(context.WithoutCancel(ctx), *p.qcfg)
-	p.queue.Store(q)
-	return q
+	return nil
 }
 
 // enableRegistry starts counting calls for the admin endpoints and connects
@@ -51,12 +56,11 @@ func (p *Proxy) enableRegistry() {
 }
 
 // offer is metricOut: queue the call for the sink, then count it. Neither
-// blocks. The order means a count includes only calls already queued.
-func (p *Proxy) offer(ctx context.Context, m Metric) {
-	if q := p.ensureQueue(ctx); q != nil {
-		q.Offer(m)
-	} else if p.qcfg != nil {
-		p.lateDrops.Add(1) // after Close
+// blocks; after Close the queue drops and counts. The order means a count
+// includes only calls already queued.
+func (p *Proxy) offer(m Metric) {
+	if p.queue != nil {
+		p.queue.Offer(m)
 	}
 	if r := p.reg.Load(); r != nil {
 		r.Observe(m)
@@ -64,30 +68,35 @@ func (p *Proxy) offer(ctx context.Context, m Metric) {
 }
 
 // Close stops the session sweeper and the OnSessionClosed goroutine, flushes
-// the metric queue to the sink and stops its goroutine. Call it
-// after the HTTP server has shut down so every call's Metric is queued. If ctx
-// ends first, Close returns its error and whatever the sink has not accepted
-// is lost (and counted as dropped). Without a sink it does nothing. It is
-// safe to call more than once; calls handled afterwards drop their metrics.
+// the metric queue to the sink and stops its writer (a proxy that was never
+// started still flushes). Call it after the HTTP server has shut down so
+// every call's Metric is queued. If ctx ends first, Close returns its error
+// and whatever the sink has not accepted is lost (and counted as dropped).
+// It is safe to call more than once; calls handled afterwards drop their
+// metrics, and Start returns ErrClosed.
 func (p *Proxy) Close(ctx context.Context) error {
+	p.closed.Store(true)
 	sessErr := p.closeSessions(ctx)
-	p.qmu.Lock()
-	p.qclosed = true
-	q := p.queue.Load()
-	p.qmu.Unlock()
-	if q == nil {
+	if p.queue == nil {
 		return sessErr
 	}
-	return errors.Join(sessErr, q.Close(ctx))
+	return errors.Join(sessErr, p.queue.Close(ctx))
 }
 
-// serveReadyz answers 503 while the metric sink is failing (ARCHITECTURE.md
-// section 7), so an orchestrator stops sending new traffic to a node that
-// cannot record it; /healthz stays 200.
+// serveReadyz answers 503 while a configured metric sink cannot record
+// calls: its writer was never started, or the sink has failed
+// Limits.MetricFailAfter times in a row (ARCHITECTURE.md section 7). An
+// orchestrator then stops sending new traffic; /healthz stays 200.
 func (p *Proxy) serveReadyz(w http.ResponseWriter, _ *http.Request) {
-	if q := p.queue.Load(); q != nil && !q.Stats().Ready {
-		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "metric sink unavailable"})
-		return
+	if p.queue != nil {
+		switch st := p.queue.Stats(); {
+		case !st.Started:
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "metric writer not started"})
+			return
+		case !st.Ready:
+			writeJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "metric sink unavailable"})
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
 }
@@ -121,12 +130,9 @@ func (p *Proxy) report() metrics.Report {
 	if reg := p.reg.Load(); reg != nil {
 		r.Snapshot = reg.Snapshot()
 	}
-	if p.qcfg != nil {
-		r.Queue, r.HasQueue = metrics.Stats{Ready: true}, true
-		if q := p.queue.Load(); q != nil {
-			r.Queue = q.Stats()
-		}
-		r.Queue.Dropped += p.lateDrops.Load()
+	if p.queue != nil {
+		st := p.queue.Stats()
+		r.Queue = &st
 	}
 	return r
 }
@@ -183,10 +189,9 @@ func statuszOf(r metrics.Report) statuszDoc {
 		d.Calls.ByProvider[c.Provider] = pr
 		d.Calls.Total += c.N
 	}
-	d.Metrics.Enabled = r.HasQueue
+	d.Metrics.Enabled = r.Queue != nil
 	d.Metrics.SinkReady = true
-	if r.HasQueue {
-		q := r.Queue
+	if q := r.Queue; q != nil {
 		d.Metrics.QueueDepth, d.Metrics.Dropped, d.Metrics.SinkErrors, d.Metrics.Written, d.Metrics.SinkReady = q.Depth, q.Dropped, q.SinkErrors, q.Written, q.Ready
 	}
 	d.Hooks.UnbufferedResponses, d.Hooks.DroppedEvents = r.Hooks.UnbufferedResponses, r.Hooks.DroppedEvents

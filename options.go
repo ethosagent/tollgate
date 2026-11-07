@@ -62,6 +62,10 @@ type Limits struct {
 	MetricQueue         int           // metrics queued for the sink
 	MetricBatch         int           // largest batch handed to MetricSink.Write (capped at MetricQueue)
 	MetricFlushInterval time.Duration // longest a metric waits before a partial batch is written
+	MetricWriteTimeout  time.Duration // deadline of one MetricSink.Write; past it the write counts as failed
+	// MetricFailAfter is how many consecutive failed sink writes (error,
+	// panic or timeout) make /readyz answer 503; one success makes it ready.
+	MetricFailAfter     int
 	SessionTTL          time.Duration // quiet time before a session closes
 	MaxSessions         int           // live sessions kept (LRU beyond)
 	MaxConnsPerHost     int
@@ -87,6 +91,8 @@ func DefaultLimits() Limits {
 		MetricQueue:         10_000,
 		MetricBatch:         500,
 		MetricFlushInterval: time.Second,
+		MetricWriteTimeout:  10 * time.Second,
+		MetricFailAfter:     3,
 		SessionTTL:          5 * time.Minute,
 		MaxSessions:         100_000,
 		MaxConnsPerHost:     100,
@@ -152,6 +158,8 @@ func (l Limits) withDefaults() Limits {
 	l.MetricQueue = cmp.Or(l.MetricQueue, d.MetricQueue)
 	l.MetricBatch = cmp.Or(l.MetricBatch, d.MetricBatch)
 	l.MetricFlushInterval = cmp.Or(l.MetricFlushInterval, d.MetricFlushInterval)
+	l.MetricWriteTimeout = cmp.Or(l.MetricWriteTimeout, d.MetricWriteTimeout)
+	l.MetricFailAfter = cmp.Or(l.MetricFailAfter, d.MetricFailAfter)
 	l.SessionTTL = cmp.Or(l.SessionTTL, d.SessionTTL)
 	l.MaxSessions = cmp.Or(l.MaxSessions, d.MaxSessions)
 	l.MaxConnsPerHost = cmp.Or(l.MaxConnsPerHost, d.MaxConnsPerHost)
@@ -208,6 +216,8 @@ func (l Limits) validate() error {
 		{"MetricQueue", int64(l.MetricQueue)},
 		{"MetricBatch", int64(l.MetricBatch)},
 		{"MetricFlushInterval", int64(l.MetricFlushInterval)},
+		{"MetricWriteTimeout", int64(l.MetricWriteTimeout)},
+		{"MetricFailAfter", int64(l.MetricFailAfter)},
 		{"SessionTTL", int64(l.SessionTTL)},
 		{"MaxSessions", int64(l.MaxSessions)},
 		{"MaxConnsPerHost", int64(l.MaxConnsPerHost)},

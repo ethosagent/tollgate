@@ -116,7 +116,7 @@ func testReport() Report {
 	} {
 		r.Observe(m)
 	}
-	return Report{Snapshot: r.Snapshot(), InFlight: 2, Queue: Stats{Depth: 5, Dropped: 9, SinkErrors: 4, Written: 100, Ready: false}, HasQueue: true,
+	return Report{Snapshot: r.Snapshot(), InFlight: 2, Queue: &Stats{Depth: 5, Dropped: 9, SinkErrors: 4, Written: 100, Ready: false},
 		Hooks: HookCounts{UnbufferedResponses: 6, DroppedEvents: 8}}
 }
 

@@ -70,6 +70,9 @@ func sinkProxy(t *testing.T, sink tollgate.MetricSink, l tollgate.Limits) (*toll
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -214,4 +217,52 @@ func TestMetrics_StuckSinkNeverSlowsCalls(t *testing.T) {
 		t.Fatalf("Close on a stuck sink = %v, want the deadline error", err)
 	}
 	close(stuck.release) // let the writer end so the test leaves no goroutine
+}
+
+func TestMetrics_ReadyzFollowsMetricFailAfter(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	sink := &collectSink{}
+	sink.fail.Store(true)
+	_, base := sinkProxy(t, sink, tollgate.Limits{MetricBatch: 1, MetricFailAfter: 1})
+	_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
+	eventually(t, "/readyz 503 after one failure", func() bool { return getStatus(t, base+"/readyz") == 503 })
+}
+
+// TestMetrics_LifecycleIsExplicit: with a sink, New starts nothing; /readyz
+// says so until Start, and Start after Close is refused.
+func TestMetrics_LifecycleIsExplicit(t *testing.T) {
+	p, err := tollgate.New(tollgate.Options{Auth: allowLocal("acme"), Metrics: &collectSink{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := serve(t, p)
+	if s := getStatus(t, base+"/readyz"); s != 503 {
+		t.Fatalf("/readyz before Start = %d, want 503 (metric writer not started)", s)
+	}
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s := getStatus(t, base+"/readyz"); s != 200 {
+		t.Fatalf("/readyz after Start = %d, want 200", s)
+	}
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(context.Background()); !errors.Is(err, tollgate.ErrClosed) {
+		t.Fatalf("Start after Close = %v, want ErrClosed", err)
+	}
+}
+
+func TestMetrics_StartWithoutASinkDoesNothing(t *testing.T) {
+	p, err := tollgate.New(tollgate.Options{Auth: allowLocal("acme")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if s := getStatus(t, serve(t, p)+"/readyz"); s != 200 {
+		t.Fatalf("/readyz = %d, want 200 with no sink", s)
+	}
+	closeProxy(t, p)
 }

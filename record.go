@@ -47,7 +47,7 @@ func (p *Proxy) finishCall(ctx context.Context, o *outcome) {
 	d := time.Since(o.start)
 	p.logCall(ctx, o, d)
 	if o.tap == nil && !o.chn.Has(chain.StageAfter) {
-		p.emit(ctx, o.metric(d))
+		p.emit(o.metric(d))
 		return
 	}
 	go p.settle(context.WithoutCancel(ctx), o, d) // hooks outlive the handler
@@ -62,12 +62,12 @@ func (p *Proxy) settle(ctx context.Context, o *outcome, d time.Duration) {
 	}
 	m := o.metric(d)
 	o.chn.After(ctx, o.call, m)
-	p.emit(ctx, m)
+	p.emit(m)
 }
 
-func (p *Proxy) emit(ctx context.Context, m Metric) {
+func (p *Proxy) emit(m Metric) {
 	if out := p.metricOut.Load(); out != nil {
-		(*out)(ctx, m)
+		(*out)(m)
 	}
 }
 

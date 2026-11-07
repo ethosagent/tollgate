@@ -29,6 +29,8 @@ func TestDefaultLimits_MatchDocumentedValues(t *testing.T) {
 		{"MetricQueue", d.MetricQueue, 10_000},
 		{"MetricBatch", d.MetricBatch, 500},
 		{"MetricFlushInterval", d.MetricFlushInterval, time.Second},
+		{"MetricWriteTimeout", d.MetricWriteTimeout, 10 * time.Second},
+		{"MetricFailAfter", d.MetricFailAfter, 3},
 		{"SessionTTL", d.SessionTTL, 5 * time.Minute},
 		{"MaxSessions", d.MaxSessions, 100_000},
 		{"MaxConnsPerHost", d.MaxConnsPerHost, 100},

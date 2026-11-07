@@ -10,21 +10,15 @@ import (
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
-// Defaults for the zero fields of Config.
-const (
-	DefaultWriteTimeout = 10 * time.Second
-	DefaultFailAfter    = 3
-)
-
-// Config configures a Queue. Sink, Queue, Batch and Interval are required
-// (the proxy fills them from Options and Limits); the rest default.
+// Config configures a Queue. Every field is required and positive: the
+// proxy fills them from Options and Limits, the one owner of the defaults.
 type Config struct {
 	Sink         model.MetricSink
 	Queue        int           // metrics waiting for the writer
 	Batch        int           // largest batch handed to the sink; capped at Queue
 	Interval     time.Duration // longest a metric waits before a partial batch is written
-	WriteTimeout time.Duration // deadline of one Sink.Write; default DefaultWriteTimeout
-	FailAfter    int           // consecutive failed writes that make the queue not ready; default DefaultFailAfter
+	WriteTimeout time.Duration // deadline of one Sink.Write (Limits.MetricWriteTimeout)
+	FailAfter    int           // consecutive failed writes that make the queue not ready (Limits.MetricFailAfter)
 }
 
 // Stats is a point-in-time view of a Queue.
@@ -33,19 +27,24 @@ type Stats struct {
 	Dropped    int64 // offered but never written: queue full, closed, or in a failed batch
 	SinkErrors int64 // failed Sink.Write calls (error, panic, timeout)
 	Written    int64 // metrics a Sink.Write accepted
-	Ready      bool  // false after FailAfter consecutive failures or a write stuck past its timeout
+	Started    bool  // the writer was started (Start, or Close)
+	Ready      bool  // started, and neither FailAfter consecutive failures nor a write stuck past its timeout
 }
 
 // Queue is the bounded buffer between the request path and a MetricSink. Offer
 // never blocks; one goroutine batches to the sink. It is safe for concurrent
-// use. Create it with New and stop it with Close.
+// use. Its lifecycle is explicit: New allocates it, Start runs the writer,
+// Close flushes and stops it. Offers made before Start wait in the bounded
+// buffer (full drops and counts, as always).
 type Queue struct {
 	cfg    Config
 	ch     chan model.Metric
 	stop   chan struct{}
 	done   chan struct{}
-	cancel context.CancelFunc // ends every Write's context when Close gives up
+	cancel context.CancelFunc // ends every Write's context when Close gives up; set by Start
 
+	startOnce sync.Once
+	started   atomic.Bool
 	closeOnce sync.Once
 	closed    atomic.Bool
 
@@ -54,26 +53,24 @@ type Queue struct {
 	inflight                     atomic.Int64 // unix nanos the running write started, 0 when idle
 }
 
-// New starts the writer goroutine; the caller must Close the Queue. base is
-// the parent of every Write's context (use a context that outlives requests).
-func New(base context.Context, cfg Config) *Queue {
-	cfg.WriteTimeout = durOr(cfg.WriteTimeout, DefaultWriteTimeout)
-	if cfg.FailAfter <= 0 {
-		cfg.FailAfter = DefaultFailAfter
-	}
+// New returns a Queue that accepts offers but writes nothing until Start.
+// It starts no goroutine.
+func New(cfg Config) *Queue {
 	cfg.Batch = max(1, min(cfg.Batch, cfg.Queue))
-	q := &Queue{cfg: cfg, ch: make(chan model.Metric, cfg.Queue), stop: make(chan struct{}), done: make(chan struct{})}
-	ctx, cancel := context.WithCancel(base)
-	q.cancel = cancel
-	go q.run(ctx)
-	return q
+	return &Queue{cfg: cfg, ch: make(chan model.Metric, cfg.Queue), stop: make(chan struct{}), done: make(chan struct{}),
+		cancel: func() {}}
 }
 
-func durOr(d, def time.Duration) time.Duration {
-	if d <= 0 {
-		return def
-	}
-	return d
+// Start starts the writer goroutine, once; later calls do nothing. ctx's
+// values reach every Sink.Write; its cancellation does not stop the writer
+// (Close does, after flushing), so a host may pass its signal context.
+func (q *Queue) Start(ctx context.Context) {
+	q.startOnce.Do(func() {
+		wctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		q.cancel = cancel
+		q.started.Store(true)
+		go q.run(wctx)
+	})
 }
 
 // Offer enqueues m without blocking. A full or closed queue drops m and
@@ -96,7 +93,7 @@ func (q *Queue) Offer(m model.Metric) {
 // time: a straggler that lands later is still counted.
 func (q *Queue) Stats() Stats {
 	st := Stats{Depth: len(q.ch), Dropped: q.dropped.Load(), SinkErrors: q.sinkErrors.Load(),
-		Written: q.written.Load(), Ready: q.ready()}
+		Written: q.written.Load(), Started: q.started.Load(), Ready: q.ready()}
 	select {
 	case <-q.done:
 		st.Dropped += int64(st.Depth)
@@ -106,7 +103,7 @@ func (q *Queue) Stats() Stats {
 }
 
 func (q *Queue) ready() bool {
-	if q.consecutive.Load() >= int64(q.cfg.FailAfter) {
+	if !q.started.Load() || q.consecutive.Load() >= int64(q.cfg.FailAfter) {
 		return false
 	}
 	since := q.inflight.Load()
@@ -114,9 +111,12 @@ func (q *Queue) ready() bool {
 }
 
 // Close stops accepting metrics, writes what is queued and ends the writer.
-// If ctx ends first it cancels the writer's context, returns ctx's error and
-// leaves the writer to finish as soon as the sink returns. It is idempotent.
+// A Queue that was never started is started here, with ctx, so what was
+// offered is still flushed. If ctx ends first it cancels the writer's
+// context, returns ctx's error and leaves the writer to finish as soon as
+// the sink returns. It is idempotent.
 func (q *Queue) Close(ctx context.Context) error {
+	q.Start(ctx)
 	q.closeOnce.Do(func() {
 		q.closed.Store(true)
 		close(q.stop)

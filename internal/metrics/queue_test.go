@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"sync"
@@ -71,6 +72,16 @@ func eventually(t *testing.T, what string, ok func() bool) {
 	}
 }
 
+// startQ is New plus Start, with the proxy's default write timeout and
+// failure threshold where the test leaves them zero.
+func startQ(c Config) *Queue {
+	c.WriteTimeout = cmp.Or(c.WriteTimeout, 10*time.Second)
+	c.FailAfter = cmp.Or(c.FailAfter, 3)
+	q := New(c)
+	q.Start(context.Background())
+	return q
+}
+
 func closeQ(t *testing.T, q *Queue) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -95,7 +106,7 @@ func TestQueue_BatchesBySizeAndInterval(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := &recSink{}
-			q := New(context.Background(), Config{Sink: s, Queue: 100, Batch: tt.batch, Interval: tt.interval})
+			q := startQ(Config{Sink: s, Queue: 100, Batch: tt.batch, Interval: tt.interval})
 			defer closeQ(t, q)
 			for range tt.offers {
 				q.Offer(model.Metric{CallID: "x"})
@@ -111,7 +122,7 @@ func TestQueue_BatchesBySizeAndInterval(t *testing.T) {
 
 func TestQueue_CloseFlushesWhatIsQueued(t *testing.T) {
 	s := &recSink{}
-	q := New(context.Background(), Config{Sink: s, Queue: 100, Batch: 100, Interval: time.Hour})
+	q := startQ(Config{Sink: s, Queue: 100, Batch: 100, Interval: time.Hour})
 	for range 7 {
 		q.Offer(model.Metric{})
 	}
@@ -128,7 +139,7 @@ func TestQueue_CloseFlushesWhatIsQueued(t *testing.T) {
 
 func TestQueue_StuckSinkDropsAndCountsWithoutBlocking(t *testing.T) {
 	s := newBlockSink()
-	q := New(context.Background(), Config{Sink: s, Queue: 4, Batch: 4, Interval: time.Hour})
+	q := startQ(Config{Sink: s, Queue: 4, Batch: 4, Interval: time.Hour})
 	defer func() {
 		close(s.release)
 		closeQ(t, q)
@@ -152,7 +163,7 @@ func TestQueue_StuckSinkDropsAndCountsWithoutBlocking(t *testing.T) {
 
 func TestQueue_CloseGivesUpAtItsDeadlineOnAStuckSink(t *testing.T) {
 	s := newBlockSink()
-	q := New(context.Background(), Config{Sink: s, Queue: 4, Batch: 4, Interval: time.Hour})
+	q := startQ(Config{Sink: s, Queue: 4, Batch: 4, Interval: time.Hour})
 	q.Offer(model.Metric{})
 	q.Offer(model.Metric{})
 	q.Offer(model.Metric{})
@@ -169,7 +180,7 @@ func TestQueue_CloseGivesUpAtItsDeadlineOnAStuckSink(t *testing.T) {
 
 func TestQueue_SinkErrorsAreCountedAndDropTheBatch(t *testing.T) {
 	s := &recSink{fail: true}
-	q := New(context.Background(), Config{Sink: s, Queue: 10, Batch: 2, Interval: time.Hour})
+	q := startQ(Config{Sink: s, Queue: 10, Batch: 2, Interval: time.Hour})
 	defer closeQ(t, q)
 	for range 4 {
 		q.Offer(model.Metric{})
@@ -181,7 +192,7 @@ func TestQueue_SinkErrorsAreCountedAndDropTheBatch(t *testing.T) {
 }
 
 func TestQueue_APanickingSinkIsAnErrorNotACrash(t *testing.T) {
-	q := New(context.Background(), Config{Sink: panicSink{}, Queue: 10, Batch: 1, Interval: time.Hour})
+	q := startQ(Config{Sink: panicSink{}, Queue: 10, Batch: 1, Interval: time.Hour})
 	defer closeQ(t, q)
 	q.Offer(model.Metric{})
 	eventually(t, "the panic counted", func() bool { return q.Stats().SinkErrors == 1 })
@@ -193,7 +204,7 @@ func (panicSink) Write(context.Context, []model.Metric) error { panic("boom") }
 
 func TestQueue_ReadyAfterNConsecutiveFailuresAndRecovers(t *testing.T) {
 	s := &recSink{fail: true}
-	q := New(context.Background(), Config{Sink: s, Queue: 10, Batch: 1, Interval: time.Hour, FailAfter: 3})
+	q := startQ(Config{Sink: s, Queue: 10, Batch: 1, Interval: time.Hour, FailAfter: 3})
 	defer closeQ(t, q)
 	if !q.Stats().Ready {
 		t.Fatal("not ready before any write")
@@ -212,7 +223,7 @@ func TestQueue_ReadyAfterNConsecutiveFailuresAndRecovers(t *testing.T) {
 
 func TestQueue_NotReadyWhileAWriteIsStuckPastItsTimeout(t *testing.T) {
 	s := newBlockSink()
-	q := New(context.Background(), Config{Sink: s, Queue: 2, Batch: 1, Interval: time.Hour, WriteTimeout: 20 * time.Millisecond})
+	q := startQ(Config{Sink: s, Queue: 2, Batch: 1, Interval: time.Hour, WriteTimeout: 20 * time.Millisecond})
 	defer func() {
 		close(s.release)
 		closeQ(t, q)
@@ -224,7 +235,7 @@ func TestQueue_NotReadyWhileAWriteIsStuckPastItsTimeout(t *testing.T) {
 
 func TestQueue_WriteContextCarriesTheTimeout(t *testing.T) {
 	got := make(chan time.Duration, 1)
-	q := New(context.Background(), Config{Sink: sinkFunc(func(ctx context.Context, _ []model.Metric) error {
+	q := startQ(Config{Sink: sinkFunc(func(ctx context.Context, _ []model.Metric) error {
 		dl, ok := ctx.Deadline()
 		if !ok {
 			got <- -1
@@ -246,7 +257,7 @@ func (f sinkFunc) Write(ctx context.Context, b []model.Metric) error { return f(
 
 func TestQueue_ConcurrentOffersAreAllWrittenOrCounted(t *testing.T) {
 	s := &recSink{}
-	q := New(context.Background(), Config{Sink: s, Queue: 64, Batch: 16, Interval: time.Millisecond})
+	q := startQ(Config{Sink: s, Queue: 64, Batch: 16, Interval: time.Millisecond})
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Add(1)
@@ -270,10 +281,37 @@ func TestQueue_ConcurrentOffersAreAllWrittenOrCounted(t *testing.T) {
 // a straggler must still be counted as dropped ("offered => written or
 // dropped"). The test sends into the buffer directly, as that Offer would.
 func TestQueue_OfferThatRacesCloseIsCountedDropped(t *testing.T) {
-	q := New(context.Background(), Config{Sink: &recSink{}, Queue: 4, Batch: 4, Interval: time.Hour})
+	q := startQ(Config{Sink: &recSink{}, Queue: 4, Batch: 4, Interval: time.Hour})
 	closeQ(t, q)
 	q.ch <- model.Metric{CallID: "straggler"}
 	if got := q.Stats().Dropped; got != 1 {
 		t.Fatalf("Dropped = %d, want 1 for a metric that reached the buffer after the writer ended", got)
+	}
+}
+
+func TestQueue_LifecycleIsExplicit(t *testing.T) {
+	s := &recSink{}
+	q := New(Config{Sink: s, Queue: 10, Batch: 10, Interval: time.Millisecond, WriteTimeout: time.Second, FailAfter: 3})
+	q.Offer(model.Metric{CallID: "early"})
+	if st := q.Stats(); st.Started || st.Ready || st.Depth != 1 {
+		t.Fatalf("before Start: %+v, want not started, not ready, the offer waiting", st)
+	}
+	q.Start(context.Background())
+	q.Start(context.Background()) // idempotent
+	eventually(t, "the early offer written", func() bool { _, n, _ := s.snapshot(); return n == 1 })
+	if st := q.Stats(); !st.Started || !st.Ready {
+		t.Fatalf("after Start: %+v, want started and ready", st)
+	}
+	closeQ(t, q)
+}
+
+func TestQueue_CloseWithoutStartStillFlushes(t *testing.T) {
+	s := &recSink{}
+	q := New(Config{Sink: s, Queue: 10, Batch: 10, Interval: time.Hour, WriteTimeout: time.Second, FailAfter: 3})
+	q.Offer(model.Metric{})
+	q.Offer(model.Metric{})
+	closeQ(t, q)
+	if _, n, _ := s.snapshot(); n != 2 {
+		t.Fatalf("sink got %d metrics, want 2: Close must flush a queue that was never started", n)
 	}
 }

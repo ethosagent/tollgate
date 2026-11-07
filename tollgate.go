@@ -1,7 +1,6 @@
 package tollgate
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -34,13 +33,11 @@ type Proxy struct {
 	// metricOut receives every call's Metric once After has run (record.go).
 	// admin.go sets it (to offer) only when a sink is configured or the admin
 	// handler is used; while it is nil and no hook needs it, a call skips
-	// parsing and usage.
-	metricOut atomic.Pointer[func(context.Context, Metric)]
-	qcfg      *metrics.Config // nil without a sink; set in New, never changed
-	qmu       sync.Mutex      // guards starting and closing the queue
-	qclosed   bool
-	queue     atomic.Pointer[metrics.Queue] // started by the first call's metric (admin.go)
-	lateDrops atomic.Int64                  // metrics offered after Close
+	// parsing and usage. It is atomic because AdminHandler may be called
+	// while calls are being served.
+	metricOut atomic.Pointer[func(Metric)]
+	queue     *metrics.Queue // nil without a sink; set in New, written by Start (admin.go)
+	closed    atomic.Bool    // Close was called
 	reg       atomic.Pointer[metrics.Registry]
 	admin     sync.Once
 	adminH    http.Handler
@@ -95,7 +92,8 @@ func (p *Proxy) Use(hooks ...Hook) {
 // Handler returns the HTTP handler: health endpoints plus the proxy.
 //
 //	GET /healthz   200 while the process is alive
-//	GET /readyz    200 when ready to take traffic; 503 while the metric sink is failing
+//	GET /readyz    200 when ready to take traffic; 503 while a configured
+//	               metric sink is not started (Start) or is failing
 //	ANY /{provider}/...  the proxy pipeline
 //
 // It returns the same handler on every call.

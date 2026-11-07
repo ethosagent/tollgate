@@ -27,6 +27,9 @@ func TestSink_RecordsAProxiedCallAndCloseFlushesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := p.Start(context.Background()); err != nil { // the metric writer
+		t.Fatal(err)
+	}
 	srv := httptest.NewServer(p.Handler())
 	defer srv.Close()
 	req, _ := http.NewRequestWithContext(context.Background(), http.MethodPost, srv.URL+"/openai/v1/chat/completions",

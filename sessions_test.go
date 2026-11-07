@@ -84,6 +84,9 @@ func newSessionProxy(t *testing.T, opts tollgate.Options) (base string, p *tollg
 	t.Helper()
 	h = &sessHook{}
 	base, p = newHookedProxy(t, opts, h)
+	if err := p.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	closeProxy(t, p)
 	return base, p, h
 }
