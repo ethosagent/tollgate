@@ -112,6 +112,7 @@ new optional interface that the core type-asserts, so old plugins compile.
 | Admission deadline, queue wait included | 30 s (`AdmissionDeadline`) |
 | Finalizer budget / recovery ceiling | 2 per finalizer / 10 per call |
 | Event buffer / metric queue | 1024 / 10 000; overflow drops + counts |
+| Metric batch / flush interval | 500 / 1 s (`MetricBatch`, `MetricFlushInterval`) |
 | Session TTL / max live sessions | 5 min / 100 000 (LRU) |
 | Transport pool per host | 100 conns, 20 idle, 30 s idle expiry, HTTP/2 |
 
@@ -160,7 +161,9 @@ body too large 413, bad resolver target 502, upstream unreachable 502, timed
 out 504, extension panic 500, extension past its deadline 503.
 
 Endpoints served by the core: `ANY /{provider}/*`, `GET /healthz`,
-`GET /readyz`; later `GET /statusz` (host-only) and `GET /metrics` (optional).
+`GET /readyz` (503 after 3 consecutive sink failures). `GET /statusz` and
+`GET /metrics` are served by `Proxy.AdminHandler()`, never on the proxy mux;
+the host binds it to a private listener. `Proxy.Close(ctx)` flushes the sink.
 
 ## 8. Amendment procedure
 

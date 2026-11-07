@@ -47,7 +47,7 @@ func (p *Proxy) finishCall(ctx context.Context, o *outcome) {
 	d := time.Since(o.start)
 	p.logCall(ctx, o, d)
 	if o.tap == nil && !o.chn.Has(chain.StageAfter) {
-		p.emit(o.metric(d))
+		p.emit(ctx, o.metric(d))
 		return
 	}
 	go p.settle(context.WithoutCancel(ctx), o, d) // hooks outlive the handler
@@ -62,19 +62,19 @@ func (p *Proxy) settle(ctx context.Context, o *outcome, d time.Duration) {
 	}
 	m := o.metric(d)
 	o.chn.After(ctx, o.call, m)
-	p.emit(m)
+	p.emit(ctx, m)
 }
 
-func (p *Proxy) emit(m Metric) {
-	if p.metricOut != nil {
-		p.metricOut(m)
+func (p *Proxy) emit(ctx context.Context, m Metric) {
+	if out := p.metricOut.Load(); out != nil {
+		(*out)(ctx, m)
 	}
 }
 
 // wantsUsage reports whether anyone reads Metric.Usage for a call on chn: an
-// After hook, or the metric sink once milestone 006 connects it.
+// After hook, or the metrics output (a sink or the admin endpoints, admin.go).
 func (p *Proxy) wantsUsage(chn *chain.Chain) bool {
-	return p.metricOut != nil || chn.Has(chain.StageAfter)
+	return p.metricOut.Load() != nil || chn.Has(chain.StageAfter)
 }
 
 // metric builds the call's Metric; d is the handler's duration.

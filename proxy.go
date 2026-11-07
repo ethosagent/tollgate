@@ -22,6 +22,8 @@ import (
 // status through model.StatusOf (ADR 0008). Every call, whatever its path,
 // ends in finishCall, which emits its one Metric.
 func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
+	p.inflight.Add(1)
+	defer p.inflight.Add(-1)
 	o := p.newOutcome(w, r)
 	defer p.finishCall(r.Context(), o)
 	req, release, ok := p.prepare(r, o)

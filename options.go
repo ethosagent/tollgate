@@ -60,6 +60,8 @@ type Limits struct {
 	RecoveryCeiling     int           // recovery calls per call, all finalizers
 	EventBuffer         int           // events queued for OnEvent hooks
 	MetricQueue         int           // metrics queued for the sink
+	MetricBatch         int           // largest batch handed to MetricSink.Write (capped at MetricQueue)
+	MetricFlushInterval time.Duration // longest a metric waits before a partial batch is written
 	SessionTTL          time.Duration // quiet time before a session closes
 	MaxSessions         int           // live sessions kept (LRU beyond)
 	MaxConnsPerHost     int
@@ -83,6 +85,8 @@ func DefaultLimits() Limits {
 		RecoveryCeiling:     10,
 		EventBuffer:         1024,
 		MetricQueue:         10_000,
+		MetricBatch:         500,
+		MetricFlushInterval: time.Second,
 		SessionTTL:          5 * time.Minute,
 		MaxSessions:         100_000,
 		MaxConnsPerHost:     100,
@@ -146,6 +150,8 @@ func (l Limits) withDefaults() Limits {
 	l.RecoveryCeiling = cmp.Or(l.RecoveryCeiling, d.RecoveryCeiling)
 	l.EventBuffer = cmp.Or(l.EventBuffer, d.EventBuffer)
 	l.MetricQueue = cmp.Or(l.MetricQueue, d.MetricQueue)
+	l.MetricBatch = cmp.Or(l.MetricBatch, d.MetricBatch)
+	l.MetricFlushInterval = cmp.Or(l.MetricFlushInterval, d.MetricFlushInterval)
 	l.SessionTTL = cmp.Or(l.SessionTTL, d.SessionTTL)
 	l.MaxSessions = cmp.Or(l.MaxSessions, d.MaxSessions)
 	l.MaxConnsPerHost = cmp.Or(l.MaxConnsPerHost, d.MaxConnsPerHost)
@@ -200,6 +206,8 @@ func (l Limits) validate() error {
 		{"RecoveryCeiling", int64(l.RecoveryCeiling)},
 		{"EventBuffer", int64(l.EventBuffer)},
 		{"MetricQueue", int64(l.MetricQueue)},
+		{"MetricBatch", int64(l.MetricBatch)},
+		{"MetricFlushInterval", int64(l.MetricFlushInterval)},
 		{"SessionTTL", int64(l.SessionTTL)},
 		{"MaxSessions", int64(l.MaxSessions)},
 		{"MaxConnsPerHost", int64(l.MaxConnsPerHost)},

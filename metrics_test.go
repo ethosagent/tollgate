@@ -1,0 +1,217 @@
+package tollgate_test
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/ethosagent/tollgate"
+	"github.com/ethosagent/tollgate/testkit"
+)
+
+// collectSink records every metric it is written; fail makes Write return an error.
+type collectSink struct {
+	mu   sync.Mutex
+	got  []tollgate.Metric
+	size []int
+	fail atomic.Bool
+}
+
+func (s *collectSink) Write(_ context.Context, b []tollgate.Metric) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.size = append(s.size, len(b))
+	if s.fail.Load() {
+		return errors.New("sink down")
+	}
+	s.got = append(s.got, b...)
+	return nil
+}
+
+func (s *collectSink) metrics() []tollgate.Metric {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]tollgate.Metric(nil), s.got...)
+}
+
+func (s *collectSink) batchSizes() []int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]int(nil), s.size...)
+}
+
+// stuckSink blocks every Write until released, ignoring its context.
+type stuckSink struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newStuckSink() *stuckSink {
+	return &stuckSink{entered: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (s *stuckSink) Write(context.Context, []tollgate.Metric) error {
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
+	return nil
+}
+
+// sinkProxy starts a proxy with sink and closes it when the test ends.
+func sinkProxy(t *testing.T, sink tollgate.MetricSink, l tollgate.Limits) (*tollgate.Proxy, string) {
+	t.Helper()
+	if l.MetricFlushInterval == 0 {
+		l.MetricFlushInterval = 10 * time.Millisecond
+	}
+	p, err := tollgate.New(tollgate.Options{Auth: allowLocal("acme"), Metrics: sink, Limits: l})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := p.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
+	})
+	return p, serve(t, p)
+}
+
+func TestMetrics_SinkReceivesOneMetricPerCallInBatches(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	sink := &collectSink{}
+	_, base := sinkProxy(t, sink, tollgate.Limits{MetricBatch: 3})
+	for range 7 {
+		_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
+	}
+	eventually(t, "7 metrics in the sink", func() bool { return len(sink.metrics()) == 7 })
+	seen := map[string]bool{}
+	for _, m := range sink.metrics() {
+		if seen[m.CallID] || m.Provider != "openai" || m.Finish != tollgate.FinishOK || m.Usage.InputTokens == 0 {
+			t.Fatalf("metric = %+v (duplicate or incomplete)", m)
+		}
+		seen[m.CallID] = true
+	}
+	for _, n := range sink.batchSizes() {
+		if n > 3 {
+			t.Fatalf("batch of %d, want <= MetricBatch 3", n)
+		}
+	}
+}
+
+func TestMetrics_CloseFlushesTheQueue(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	sink := &collectSink{}
+	p, err := tollgate.New(tollgate.Options{Auth: allowLocal("acme"), Metrics: sink, Limits: tollgate.Limits{MetricFlushInterval: time.Hour}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := serve(t, p)
+	for range 4 {
+		_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
+	}
+	admin := adminServer(t, p)
+	eventually(t, "the metrics queued", func() bool { return getStatusz(t, admin).Calls.Total == 4 })
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(sink.metrics()); n != 4 {
+		t.Fatalf("sink has %d metrics after Close, want 4", n)
+	}
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatalf("second Close: %v", err)
+	}
+}
+
+func TestMetrics_CloseWithoutASinkIsANoOp(t *testing.T) {
+	p, err := tollgate.New(tollgate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMetrics_NoSinkAndNoAdminMeansNoMetricWork(t *testing.T) {
+	p, err := tollgate.New(tollgate.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MetricsWired() {
+		t.Fatal("metrics wired with the default DiscardSink and no admin handler")
+	}
+	_ = p.AdminHandler()
+	if !p.MetricsWired() {
+		t.Fatal("AdminHandler did not turn the metrics on")
+	}
+}
+
+func TestMetrics_ReadyzFailsAfterConsecutiveSinkFailuresAndRecovers(t *testing.T) {
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	sink := &collectSink{}
+	sink.fail.Store(true)
+	_, base := sinkProxy(t, sink, tollgate.Limits{MetricBatch: 1})
+	status := func() int { return getStatus(t, base+"/readyz") }
+	if status() != 200 {
+		t.Fatal("not ready before any failure")
+	}
+	for range 3 {
+		_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
+	}
+	eventually(t, "/readyz 503", func() bool { return status() == 503 })
+	if getStatus(t, base+"/healthz") != 200 {
+		t.Fatal("healthz must stay 200 while the sink is down")
+	}
+	sink.fail.Store(false)
+	_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
+	eventually(t, "/readyz back to 200", func() bool { return status() == 200 })
+}
+
+// TestMetrics_StuckSinkNeverSlowsCalls is the milestone demo: a sink that
+// blocks forever changes neither the calls' success nor their latency; the
+// overflow is dropped and counted.
+func TestMetrics_StuckSinkNeverSlowsCalls(t *testing.T) {
+	const calls = 60
+	up := testkit.NewFakeUpstream(t, testkit.Options{})
+	run := func(base string) (total time.Duration) {
+		start := time.Now()
+		for range calls {
+			if r := post(t, base, chatPath, []byte(plainRequest), via(up)); r.StatusCode != 200 {
+				t.Fatalf("status = %d", r.StatusCode)
+			} else {
+				_ = readAll(t, r)
+			}
+		}
+		return time.Since(start)
+	}
+	baseline := run(newProxyServer(t, tollgate.Options{}))
+
+	stuck := newStuckSink()
+	p, base := sinkProxy(t, stuck, tollgate.Limits{MetricQueue: 4, MetricBatch: 2})
+	withSink := run(base)
+	eventually(t, "the sink to be entered", func() bool {
+		select {
+		case <-stuck.entered:
+			return true
+		default:
+			return false
+		}
+	})
+	eventually(t, "every call's metric offered", func() bool { return p.DroppedMetrics()+int64(p.QueuedMetrics()) >= calls-2 })
+	if withSink > 3*baseline+time.Second {
+		t.Fatalf("%d calls took %v with a stuck sink vs %v without: the sink slowed calls", calls, withSink, baseline)
+	}
+	if d := p.DroppedMetrics(); d < calls-4-2 {
+		t.Fatalf("dropped = %d, want >= %d (queue 4 + one batch of 2 in the sink)", d, calls-6)
+	}
+	short, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := p.Close(short); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close on a stuck sink = %v, want the deadline error", err)
+	}
+	close(stuck.release) // let the writer end so the test leaves no goroutine
+}

@@ -35,6 +35,7 @@ func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 		req.Header, req.Body = o.call.Header, o.call.Body
 	}
 	var held *forward.Capture
+	var cp *forward.BodyCopy
 	body := http.ResponseWriter(o.w)
 	switch {
 	case wire == nil: // not parsed, or a pass-through wire: Before and After only
@@ -43,15 +44,34 @@ func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 			req.Frames = forward.NewFrameQueue(p.opts.Limits.EventBuffer)
 			o.tap = o.chn.StartTap(context.WithoutCancel(r.Context()), o.call, req.Frames, wire.NewEventMapper())
 		}
-	case o.chn.Has(chain.StageResponse) || p.wantsUsage(o.chn):
+	case o.chn.Has(chain.StageResponse): // OnResponse may replace the body: hold it
 		held = forward.NewCapture(o.w, p.opts.Limits.MaxRequestBody, heldSkip{p, o}.skipped)
 		body = held
+	case p.wantsUsage(o.chn): // usage only: the client is not made to wait for it
+		cp = forward.NewBodyCopy(o.w, p.opts.Limits.MaxRequestBody)
+		body = cp
 	}
 	res := p.relay(body, r, o, req)
 	if held != nil {
 		p.finishHeld(r.Context(), o, wire, held, res)
 	}
+	if cp != nil {
+		p.copiedUsage(o, wire, cp, res)
+	}
 	abortIfCut(res)
+}
+
+// copiedUsage reads usage from the copy of a stream:false response that
+// already went to the client unheld. A broken, failed, encoded or oversized
+// response has no usage.
+func (p *Proxy) copiedUsage(o *outcome, wire normalise.Wire, cp *forward.BodyCopy, res forward.Result) {
+	body, status, ok := cp.Held()
+	if !ok || res.Cut || status >= http.StatusBadRequest {
+		return
+	}
+	if evs, err := wire.MapBody(body); err == nil {
+		normalise.TrackUsage(&o.usage, evs)
+	}
 }
 
 // parseCall fills the Call from the request body, once, when something will
