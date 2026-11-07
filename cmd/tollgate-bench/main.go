@@ -23,6 +23,12 @@ type config struct {
 	fixture    string
 	chunkDelay time.Duration
 	json       bool
+	prof       profiles
+	// upstreamProc runs the fake upstream in a child process with
+	// GOMAXPROCS upstreamProcs (0: the default).
+	upstreamProc  bool
+	upstreamProcs int
+	serveFake     bool // internal: this process is that child
 }
 
 func main() {
@@ -44,6 +50,10 @@ func parseFlags(args []string) (config, error) {
 	fs.StringVar(&c.fixture, "fixture", "openai/chat-stream-text", "testkit response fixture the fake upstream replays (see testkit.FixtureNames); must answer 200")
 	fs.DurationVar(&c.chunkDelay, "chunk-delay", 0, "fake upstream delay between stream chunks; holds streams open")
 	fs.BoolVar(&c.json, "json", false, "print one JSON document instead of a table")
+	c.prof.register(fs)
+	fs.BoolVar(&c.upstreamProc, "upstream-proc", false, "run the fake upstream in a child process (separates its runtime from the proxy's)")
+	fs.IntVar(&c.upstreamProcs, "upstream-gomaxprocs", 0, "GOMAXPROCS of the -upstream-proc child; 0 keeps the default. Pin this process with the GOMAXPROCS env var")
+	fs.BoolVar(&c.serveFake, "serve-fake", false, "internal: serve only the fake upstream (the -upstream-proc child)")
 	if err := fs.Parse(args); err != nil {
 		return c, err
 	}
@@ -67,6 +77,9 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if cfg.serveFake {
+		return serveFake(ctx, cfg.chunkDelay, os.Stdin, out)
+	}
 	rep, err := measure(ctx, cfg)
 	if err != nil {
 		return err
@@ -85,7 +98,7 @@ func run(ctx context.Context, args []string, out io.Writer) error {
 // measure runs one warm-up pair per session (both paths, discarded), then
 // -calls measured pairs per session, and reads the drop counters.
 func measure(ctx context.Context, cfg config) (report, error) {
-	r, err := newRig(ctx, cfg.sessions, cfg.chunkDelay)
+	r, err := newRig(ctx, cfg, cfg.chunkDelay)
 	if err != nil {
 		return report{}, err
 	}
@@ -95,12 +108,15 @@ func measure(ctx context.Context, cfg config) (report, error) {
 	if _, err := l.pairs(ctx, r, cfg.sessions, 1, "warm"); err != nil {
 		return report{}, err
 	}
-	runtime.GC() // start the timed pass from a clean heap; nothing forces a GC inside it
-	pairs, err := l.pairs(ctx, r, cfg.sessions, cfg.calls, "run")
+	pairs, err := timedPass(ctx, cfg, l, r)
 	if err != nil {
 		return report{}, err
 	}
-	t, err := analyse(pairs, r.upstreamSide(), r.proxyArrival)
+	up, err := r.upstreamSide(ctx)
+	if err != nil {
+		return report{}, err
+	}
+	t, err := analyse(pairs, up, r.proxyArrival)
 	if err != nil {
 		return report{}, err
 	}
@@ -113,5 +129,20 @@ func measure(ctx context.Context, cfg config) (report, error) {
 		TotalCalls: len(pairs), WarmupCalls: cfg.sessions, ChunkDelay: cfg.chunkDelay.String(),
 		Direct: latencyOf(t.directTTFB, t.directTotal), Proxy: latencyOf(t.proxyTTFB, t.proxyTotal),
 		Overhead: overheadOf(t), PeakStreams: l.peak.Load(), Statusz: drops,
+		UpstreamProc: cfg.upstreamProc, GOMAXPROCS: runtime.GOMAXPROCS(0),
 	}, nil
+}
+
+// timedPass runs the measured pairs, under the -*profile flags if set.
+func timedPass(ctx context.Context, cfg config, l *loader, r *rig) ([]pair, error) {
+	runtime.GC() // start the timed pass from a clean heap; nothing forces a GC inside it
+	stopProf, err := cfg.prof.start()
+	if err != nil {
+		return nil, err
+	}
+	pairs, err := l.pairs(ctx, r, cfg.sessions, cfg.calls, "run")
+	if perr := stopProf(); err == nil && perr != nil {
+		err = fmt.Errorf("profiles: %w", perr)
+	}
+	return pairs, err
 }

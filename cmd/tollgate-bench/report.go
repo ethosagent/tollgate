@@ -42,6 +42,10 @@ type memory struct {
 	DirectBytesPerStream float64 `json:"direct_bytes_per_stream"`
 	ProxyBytesPerStream  float64 `json:"proxy_bytes_per_stream"`
 	AddedBytesPerStream  float64 `json:"added_bytes_per_stream"`
+	// Goroutines per open stream, whole process, read with the bytes.
+	DirectGoroutinesPerStream float64 `json:"direct_goroutines_per_stream"`
+	ProxyGoroutinesPerStream  float64 `json:"proxy_goroutines_per_stream"`
+	AddedGoroutinesPerStream  float64 `json:"added_goroutines_per_stream"`
 }
 
 // dropCounters come from the proxy's /statusz after the run.
@@ -68,6 +72,8 @@ type report struct {
 	PeakStreams     int64        `json:"peak_concurrent_streams"`
 	Memory          memory       `json:"memory"`
 	Statusz         dropCounters `json:"statusz"`
+	UpstreamProc    bool         `json:"upstream_proc"` // the fake ran in its own process
+	GOMAXPROCS      int          `json:"gomaxprocs"`    // of the client+proxy process
 }
 
 // percentile is the nearest-rank percentile (p in 0..1) of ds; 0 for none.
@@ -125,6 +131,8 @@ func writeTable(w io.Writer, r report) error {
 	m := r.Memory
 	pr("\nbytes per open stream (hold %s): direct %.0f (%d streams), proxy %.0f (%d streams), added %.0f\n",
 		m.HoldChunkDelay, m.DirectBytesPerStream, m.DirectStreams, m.ProxyBytesPerStream, m.ProxyStreams, m.AddedBytesPerStream)
+	pr("goroutines per open stream: direct %.2f, proxy %.2f, added %.2f\n",
+		m.DirectGoroutinesPerStream, m.ProxyGoroutinesPerStream, m.AddedGoroutinesPerStream)
 	pr("peak concurrent streams (latency pass): %d\n", r.PeakStreams)
 	pr("dropped: metrics %d, events %d, sink errors %d, closed sessions %d (calls seen %d, metrics written %d)\n",
 		r.Statusz.MetricsDropped, r.Statusz.EventsDropped, r.Statusz.SinkErrors, r.Statusz.SessionsClosedDropped, r.Statusz.Calls, r.Statusz.MetricsWritten)

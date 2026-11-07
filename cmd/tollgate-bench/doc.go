@@ -20,8 +20,16 @@
 //
 //	go run ./cmd/tollgate-bench -sessions 200 -calls 4 -fixture openai/chat-stream-text -chunk-delay 20ms -json
 //
-// Everything runs in one process over loopback, so absolute numbers depend
-// on the machine; compare runs on the same machine. Dependency law
+// The memory pass also counts goroutines per open stream.
+//
+// By default everything runs in one process over loopback, so absolute
+// numbers depend on the machine; compare runs on the same machine.
+// -upstream-proc moves the fake upstream into a child process (pinned with
+// -upstream-gomaxprocs; pin this process with the GOMAXPROCS env var), so the
+// fake's goroutines and GC no longer share a scheduler with the proxy; its
+// stamps then cross over as wall-clock times. Dev-only profiles of the timed
+// pass: -cpuprofile, -memprofile (plus FILE.before for pprof -diff_base),
+// -blockprofile, -mutexprofile. Dependency law
 // (internal/archtest, layer "tool", rule D5): the public API, testkit
 // included, never internal/. It is a developer tool and is not shipped
 // (ADR 0014).

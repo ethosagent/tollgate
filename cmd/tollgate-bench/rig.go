@@ -25,7 +25,7 @@ const callHeader = "x-bench-call"
 // of it with a real metric sink (its work is part of the cost), and the time
 // the proxy's listener handed each call to tollgate.
 type rig struct {
-	fake     *testkit.FakeUpstream
+	fake     upstream
 	proxy    *tollgate.Proxy
 	proxyURL string
 	arrived  sync.Map // call id -> time.Time the proxy's handler was entered
@@ -40,13 +40,22 @@ func (benchAuth) Authenticate(context.Context, *http.Request) (tollgate.Tenant, 
 	return tollgate.Tenant{ID: "bench", Policy: &tollgate.Policy{AllowedUpstreams: []string{"127.0.0.0/8"}}}, nil
 }
 
-// newRig starts a fake upstream with the given chunk delay and a proxy for
-// sessions concurrent streams.
-func newRig(ctx context.Context, sessions int, chunkDelay time.Duration) (*rig, error) {
+// newRig starts a fake upstream with the given chunk delay (in a child
+// process with -upstream-proc) and a proxy for cfg.sessions concurrent
+// streams.
+func newRig(ctx context.Context, cfg config, chunkDelay time.Duration) (*rig, error) {
 	r := &rig{}
-	fake, stopFake := testkit.NewServer(testkit.Options{ChunkDelay: chunkDelay})
-	r.fake = fake
-	r.stops = append(r.stops, stopFake)
+	sessions := cfg.sessions
+	if cfg.upstreamProc {
+		fake, err := startRemoteUpstream(ctx, chunkDelay, cfg.upstreamProcs)
+		if err != nil {
+			return nil, err
+		}
+		r.fake = fake
+	} else {
+		r.fake = newLocalUpstream(chunkDelay)
+	}
+	r.stops = append(r.stops, r.fake.stop)
 	// The default MaxConnsPerHost (100) would queue calls and measure the cap,
 	// not the proxy: give every session its own upstream connection.
 	p, err := tollgate.New(tollgate.Options{
@@ -109,24 +118,20 @@ type target struct {
 }
 
 func (r *rig) directTarget(fixture string) target {
-	return target{url: r.fake.URL + testkit.PathFor(fixture), headers: map[string]string{testkit.FixtureHeader: fixture}}
+	return target{url: r.fake.url() + testkit.PathFor(fixture), headers: map[string]string{testkit.FixtureHeader: fixture}}
 }
 
 func (r *rig) proxyTarget(fixture string) target {
 	provider, _ := testkit.RequestFor(fixture)
 	return target{url: r.proxyURL + "/" + provider + testkit.PathFor(fixture), headers: map[string]string{
 		testkit.FixtureHeader: fixture,
-		"x-upstream-url":      r.fake.URL,
+		"x-upstream-url":      r.fake.url(),
 	}}
 }
 
 // upstreamSide returns, by call id, what the fake recorded for each call.
-func (r *rig) upstreamSide() map[string]testkit.Request {
-	out := map[string]testkit.Request{}
-	for _, q := range r.fake.Requests() {
-		out[q.Header.Get(callHeader)] = q
-	}
-	return out
+func (r *rig) upstreamSide(ctx context.Context) (map[string]testkit.Request, error) {
+	return r.fake.records(ctx)
 }
 
 // proxyArrival is when the proxy's handler got call id.
