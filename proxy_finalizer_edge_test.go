@@ -70,12 +70,22 @@ func TestFinalizer_RecoveryIsBudgeted(t *testing.T) {
 // bytes unchanged, and a Decide that ignores its context costs at most the
 // deadline.
 func TestFinalizer_PanickingOrSlowDecideReleases(t *testing.T) {
-	limits := tollgate.Limits{HookBeforeDeadline: 20 * time.Millisecond, HookChainDeadline: 40 * time.Millisecond}
+	limits := tollgate.Limits{FinalizerDeadline: 40 * time.Millisecond}
 	boom := &finalizer{fn: func(int, tollgate.StreamSummary) tollgate.Decision { panic("secret") }}
+	// slow ignores its context until the test ends; each abandoned call
+	// reports its return, so the leak check never races it (no sleep).
+	gate, returned := make(chan struct{}), make(chan struct{}, 16)
 	slow := &finalizer{fn: func(int, tollgate.StreamSummary) tollgate.Decision {
-		time.Sleep(300 * time.Millisecond)
+		defer func() { returned <- struct{}{} }()
+		<-gate
 		return recoverDecision
 	}}
+	defer func() {
+		close(gate)
+		for range slow.calls.Load() {
+			<-returned
+		}
+	}()
 	for name, f := range map[string]*finalizer{"panic": boom, "slow": slow} {
 		for _, wc := range wireCases {
 			t.Run(name+"/"+wc.name, func(t *testing.T) {
@@ -95,7 +105,6 @@ func TestFinalizer_PanickingOrSlowDecideReleases(t *testing.T) {
 			})
 		}
 	}
-	time.Sleep(350 * time.Millisecond) // let the abandoned Decide end before the leak check
 }
 
 // TestFinalizer_OnlyStreamsAreHeld: stream:false is never held, and OnEvent
