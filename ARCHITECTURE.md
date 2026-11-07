@@ -51,7 +51,10 @@ testkit       ─┘                                       (engine)      (neutra
 | archtest | `internal/archtest` | stdlib | D6 |
 
 D1: a package outside every layer fails the gate. D7: any third-party import
-must be on the archtest allowlist for its layer, added with an ADR.
+must be on the archtest allowlist for its layer, added with an ADR. Test
+files: `_test.go` files in any layer may also import `testkit` for fixtures
+and the fake upstream (archtest checks non-test imports only); root tests may
+import `internal/*`. Production code never imports `testkit`.
 Enforcement: `internal/archtest` (stage `arch`) and `scripts/check-mod.sh`.
 
 Why the model lives in `internal/model` and is aliased from the root: the
@@ -105,7 +108,8 @@ new optional interface that the core type-asserts, so old plugins compile.
 
 Header names (`HeaderNames`) are options, not constants. Defaults:
 `x-proxy-key`, `x-session-id`, `x-upstream-url`. tollgate strips its own
-headers and hop-by-hop headers before forwarding.
+headers, hop-by-hop headers and any header an extension declares through
+`HeaderConsumer` (ADR 0009) before forwarding.
 
 - **Upstream target (ADR 0007).** Whatever resolver ran, `forward.Target`
   checks the final URL: the resolver's base, or the override header only when
@@ -123,16 +127,27 @@ headers and hop-by-hop headers before forwarding.
 | Admission reject | 429 + `Retry-After` | `rejected` |
 | Upstream 4xx/5xx | relayed as-is | `upstream_error` |
 | Upstream drop mid-stream | partial bytes stay sent; provider-shaped error event; close | `upstream_error` |
-| Client disconnect | upstream request cancelled via context | `client_cancel` |
+| Client disconnect (incl. during an admission wait) | upstream request cancelled via context; nothing written | `client_cancel` |
 | Deadline hit | provider-shaped timeout error | `timeout` |
+| Auth/Admission/resolver panic | recovered; provider-shaped 500; logged with seam, tenant, call id | `rejected` |
 | Hook panic/timeout | logged with tenant + call id; hook skipped; call proceeds | unchanged |
 | Sink down | metrics dropped and counted; `/readyz` fails after N consecutive failures | unchanged |
 
+A stream that times out or whose upstream drops after the first byte ends
+with a provider-shaped SSE error event and a clean close (`Finish` timeout /
+upstream_error); non-SSE bodies are still aborted; response headers are sent
+with the first body byte. The event-stream check is made once per response
+from its media type. The OnEvent frame queue is bounded in frames and bytes
+(`EventBuffer` frames, `EventBuffer` × 4 KiB); drops are counted and reported
+to the consumer as gaps, and the queue's end carries the call's `Finish`.
+
 Extension errors map to a status through one contract (ADR 0008): a
 `StatusError` with a 4xx/5xx `HTTPStatus()` wins, else the seam default (Auth
-401, Admission 429, resolver 404); `RetryAfterError` sets `Retry-After`. Core
-errors: override not allowed 403, bad override 400, body too large 413, bad
-resolver target 502, upstream unreachable 502, timed out 504.
+401, Admission 429, resolver 404); `RetryAfterError` sets `Retry-After`.
+The body message is fixed per status; no extension or transport error text
+reaches the client. Core errors: override not allowed 403, bad override 400,
+body too large 413, bad resolver target 502, upstream unreachable 502, timed
+out 504, extension panic 500.
 
 Endpoints served by the core: `ANY /{provider}/*`, `GET /healthz`,
 `GET /readyz`; later `GET /statusz` (host-only) and `GET /metrics` (optional).

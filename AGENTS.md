@@ -51,7 +51,7 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 
 - **D1** every package belongs to a layer in `ARCHITECTURE.md`.
 - **D2** `internal/model` → stdlib only.
-- **D3** `internal/*` → stdlib + `internal/*`. Never root, `ext`, `testkit`, `cmd`.
+- **D3** `internal/*` → stdlib + `internal/*`. Never root, `ext`, `testkit`, `cmd` (`_test.go` files may import `testkit`).
 - **D4** root `tollgate` → stdlib + `internal/*`. **No third-party deps in the core.**
 - **D5** `ext/**`, `cmd/**` → public API only. Never `internal/`.
 - **D6** `testkit` → stdlib + root only.
