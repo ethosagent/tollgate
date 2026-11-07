@@ -1,0 +1,134 @@
+package concurrency
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net/http"
+	"sync"
+	"time"
+
+	"github.com/ethosagent/tollgate"
+)
+
+var _ tollgate.Admission = (*Limiter)(nil)
+
+// defaultRetryAfter is the Retry-After hint when Config.RetryAfter is zero.
+const defaultRetryAfter = time.Second
+
+// Config configures New.
+type Config struct {
+	DefaultMax   int            // max in-flight calls per tenant; required, > 0
+	PerTenant    map[string]int // tenant ID -> max in-flight, overrides DefaultMax
+	QueueTimeout time.Duration  // how long a call may wait for a slot; 0 rejects at once
+	RetryAfter   time.Duration  // Retry-After hint on rejection; 0 means 1s
+}
+
+// Limiter is a tollgate.Admission that caps in-flight calls per tenant.
+type Limiter struct {
+	cfg Config
+
+	mu      sync.Mutex
+	buckets map[string]*bucket
+}
+
+// bucket is one tenant's semaphore. refs counts holders plus waiters so the
+// bucket can be dropped when the tenant goes idle.
+type bucket struct {
+	sem  chan struct{}
+	refs int
+}
+
+// busyError is the 429 returned when a tenant stays saturated.
+type busyError struct{ retryAfter time.Duration }
+
+func (e *busyError) Error() string             { return "concurrency: tenant at its in-flight limit" }
+func (e *busyError) HTTPStatus() int           { return http.StatusTooManyRequests }
+func (e *busyError) RetryAfter() time.Duration { return e.retryAfter }
+
+// New validates cfg once and builds the limiter.
+func New(cfg Config) (*Limiter, error) {
+	if cfg.DefaultMax <= 0 {
+		return nil, errors.New("concurrency: DefaultMax must be > 0")
+	}
+	if cfg.QueueTimeout < 0 {
+		return nil, errors.New("concurrency: QueueTimeout must not be negative")
+	}
+	if cfg.RetryAfter < 0 {
+		return nil, errors.New("concurrency: RetryAfter must not be negative")
+	}
+	for id, n := range cfg.PerTenant {
+		if id == "" || n <= 0 {
+			return nil, fmt.Errorf("concurrency: PerTenant needs a non-empty ID and a limit > 0 (got %q: %d)", id, n)
+		}
+	}
+	if cfg.RetryAfter == 0 {
+		cfg.RetryAfter = defaultRetryAfter
+	}
+	return &Limiter{cfg: cfg, buckets: make(map[string]*bucket)}, nil
+}
+
+// Acquire takes one slot for the tenant, waiting up to QueueTimeout or until
+// ctx ends. Past the timeout it returns a 429 error that implements
+// tollgate.StatusError and tollgate.RetryAfterError. The returned release is
+// safe to call more than once; only the first call frees the slot.
+func (l *Limiter) Acquire(ctx context.Context, t tollgate.Tenant, _ *tollgate.Call) (func(), error) {
+	b := l.enter(t.ID)
+	if err := l.wait(ctx, b); err != nil {
+		l.leave(t.ID)
+		return nil, err
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			<-b.sem
+			l.leave(t.ID)
+		})
+	}, nil
+}
+
+func (l *Limiter) wait(ctx context.Context, b *bucket) error {
+	select {
+	case b.sem <- struct{}{}:
+		return nil
+	default:
+	}
+	if l.cfg.QueueTimeout == 0 {
+		return &busyError{l.cfg.RetryAfter}
+	}
+	timer := time.NewTimer(l.cfg.QueueTimeout)
+	defer timer.Stop()
+	select {
+	case b.sem <- struct{}{}:
+		return nil
+	case <-timer.C:
+		return &busyError{l.cfg.RetryAfter}
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (l *Limiter) enter(id string) *bucket {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b, ok := l.buckets[id]
+	if !ok {
+		limit := l.cfg.DefaultMax
+		if n, ok := l.cfg.PerTenant[id]; ok {
+			limit = n
+		}
+		b = &bucket{sem: make(chan struct{}, limit)}
+		l.buckets[id] = b
+	}
+	b.refs++
+	return b
+}
+
+func (l *Limiter) leave(id string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	b := l.buckets[id]
+	if b.refs--; b.refs == 0 {
+		delete(l.buckets, id)
+	}
+}
