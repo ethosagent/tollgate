@@ -124,7 +124,7 @@ func serve(ctx context.Context, eps []endpoint, grace time.Duration, logger *slo
 			ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
 		}
 		go func() { errc <- srvs[i].Serve(ep.ln) }()
-		logger.Info("tollgated listening", "name", ep.name, "addr", ep.ln.Addr().String(), "version", version)
+		logger.Info("tollgated listening", "name", ep.name, "addr", ep.ln.Addr().String(), "version", buildVersion())
 	}
 	pending := len(eps)
 	var firstErr error

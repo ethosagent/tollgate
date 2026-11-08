@@ -67,8 +67,8 @@ func TestVersion_JSON(t *testing.T) {
 	if err := json.Unmarshal(out.Bytes(), &v); err != nil {
 		t.Fatalf("stdout %q: %v", out.String(), err)
 	}
-	if v.Version != version || v.Go != runtime.Version() {
-		t.Errorf("version json = %+v, want %q / %q", v, version, runtime.Version())
+	if v.Version != buildVersion() || v.Go != runtime.Version() {
+		t.Errorf("version json = %+v, want %q / %q", v, buildVersion(), runtime.Version())
 	}
 	if code := run(context.Background(), []string{"version", "-nope"}, &out, &errb); code != 2 {
 		t.Errorf("bad flag code = %d, want 2", code)

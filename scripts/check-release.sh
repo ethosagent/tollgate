@@ -65,7 +65,7 @@ fi
 
 if [ "$fail" -eq 0 ]; then
   # Build exactly what a consumer resolves: no workspace, published root.
-  (cd "$dir" && GOWORK=off go build ./...) ||
+  (cd "$dir" && GOWORK=off go build -o /dev/null ./...) ||
     err "$dir does not build with GOWORK=off against its required versions: it uses root code newer than the required release"
 fi
 

@@ -21,7 +21,7 @@ func TestRun_Commands(t *testing.T) {
 		wantOut  string
 		wantErr  string
 	}{
-		{"version", []string{"version"}, 0, version, ""},
+		{"version", []string{"version"}, 0, buildVersion(), ""},
 		{"help", []string{"help"}, 0, "usage:", ""},
 		{"no args", nil, 2, "", "usage:"},
 		{"unknown", []string{"bogus"}, 2, "", `unknown command "bogus"`},

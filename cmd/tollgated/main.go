@@ -24,9 +24,6 @@ import (
 	"syscall"
 )
 
-// version is stamped at build time: -ldflags "-X main.version=v1.2.3".
-var version = "0.0.0-dev"
-
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := run(ctx, os.Args[1:], os.Stdout, os.Stderr)
@@ -75,12 +72,12 @@ func runVersion(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if !*asJSON {
-		_, _ = fmt.Fprintln(stdout, version)
+		_, _ = fmt.Fprintln(stdout, buildVersion())
 		return 0
 	}
 	_ = json.NewEncoder(stdout).Encode(struct {
 		Version string `json:"version"`
 		Go      string `json:"go"`
-	}{version, runtime.Version()})
+	}{buildVersion(), runtime.Version()})
 	return 0
 }
