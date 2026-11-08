@@ -1,5 +1,6 @@
 ---
 paths:
+  - "tollgate.go"
   - "model.go"
   - "options.go"
   - "doc.go"

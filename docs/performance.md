@@ -86,8 +86,8 @@ Reading it:
 
 ## CPU per call
 
-Go benchmarks, in-memory transport (no sockets), so they isolate
-tollgate's own work:
+Go benchmarks in `internal/core` (`go test -run '^$' -bench . ./internal/core`),
+in-memory transport (no sockets), so they isolate tollgate's own work:
 
 | Benchmark | ns/op | B/op | allocs/op |
 |---|---:|---:|---:|

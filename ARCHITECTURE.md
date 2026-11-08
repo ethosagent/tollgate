@@ -45,8 +45,8 @@ testkit       ─┘                                       (engine)      (neutra
 | Layer | Packages | May import | Rule |
 |---|---|---|---|
 | model | `internal/model` | stdlib | D2 |
-| internal | `internal/*` (engine) | stdlib, `internal/*` | D3 |
-| root | `tollgate` | stdlib, `internal/*` | D4 |
+| internal | `internal/*` (engine; the pipeline is `internal/core`) | stdlib, `internal/*` | D3 |
+| root | `tollgate` (public API only: `tollgate.go`, `options.go`, `model.go`) | stdlib, `internal/*` | D4 |
 | ext, cmd | `ext/**`, `cmd/**` | stdlib, root, `ext/**`, allowlisted third-party; never `testkit` | D5 |
 | tool | `cmd/tollgate-bench` | as ext/cmd, plus `testkit` | D5 |
 | testkit | `testkit/**` | stdlib, root, `internal/fixtures`, `internal/methodset` | D6 |
@@ -70,7 +70,10 @@ test imports included (Go's internal rule does not cover them: same path prefix)
 
 Why the model lives in `internal/model` and is aliased from the root: the
 engine packages need the types, and the root package imports the engine, so
-the types cannot live in the root without a cycle (ADR 0003).
+the types cannot live in the root without a cycle (ADR 0003). The root is a
+thin wrapper: `Proxy` delegates to `internal/core`, and `Options`, `Limits`
+and `HeaderNames` stay defined (and documented) in the root, mirrored in core
+(ADR 0016).
 
 ## 4. Call lifecycle
 
@@ -90,7 +93,7 @@ request ─► Auth ─► Admission ─► ProviderResolver ─► limits/norma
 - Finalizers hold only the terminal region (seam 8 below); everything
   before it is written and flushed as it arrives.
 - Every call, rejected or not, ends in one per-call record (`outcome`,
-  `record.go`): `finishCall` builds its one `Metric` and hands it to After,
+  `internal/core/record.go`): `finishCall` builds its one `Metric` and hands it to After,
   then to the metric sink seam. With no hook and no sink nothing is parsed
   and no goroutine starts.
 

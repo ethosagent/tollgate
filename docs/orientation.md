@@ -6,9 +6,10 @@ where things are and how a request moves.
 ## The repo in one picture
 
 ```
-tollgate.go, options.go, model.go   public API (New, Use, Handler, Options, aliases)
+tollgate.go, options.go, model.go   public API only (Proxy wrapper, New, Options, aliases)
+internal/core/                      the pipeline behind the API: Proxy, record, hooks, admin
 internal/model/                     neutral types + extension interfaces (stdlib only)
-internal/{forward,chain,normalise,resolve,session,metrics}/   the engine
+internal/{forward,chain,normalise,resolve,session,metrics}/   the engine parts core wires
 ext/<area>/<name>/                  extensions, public API only
 testkit/                            fake upstream + plugin harness for extension authors
 cmd/tollgated/                      the binary: flags -> Options -> serve
@@ -22,7 +23,8 @@ before the code (archtest rule P1 guarantees it exists).
 
 ## How one streaming call flows
 
-1. `Proxy.Handler()` receives `POST /openai/v1/chat/completions`.
+1. `Proxy.Handler()` receives `POST /openai/v1/chat/completions`; the pipeline that runs
+   the steps below is `internal/core` (`proxy.go`, `hooks.go`, `record.go`).
 2. **Auth** (`Options.Auth`) turns the request into a `Tenant`, or 401/403.
 3. **Admission** (`Options.Admission`) admits it now, queues it, or 429s.
 4. **Resolve** (`internal/resolve`) picks the `Provider` from the path prefix; the rest path

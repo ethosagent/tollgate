@@ -34,7 +34,8 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 
 | Path | Role |
 |---|---|
-| `tollgate.go`, `options.go`, `model.go` | Public API: `New`, `Use`, `Handler`, `Options`, `Limits`, aliases of the model |
+| `tollgate.go`, `options.go`, `model.go` | Public API only (ADR 0016): `Proxy` wrapper, `New`, `Options`, `Limits`, model aliases |
+| `internal/core/` | The engine behind it: proxy pipeline, record, hooks, finalize, sessions, admin, option defaults/validation |
 | `internal/model/` | Neutral model (`Tenant`, `Session`, `Call`, `Event`, `Metric`) + extension interfaces + Noop defaults |
 | `internal/forward/` | Upstream target check, transport, header filter, forward + relay, client-first SSE tee |
 | `internal/chain/` | Ordered hook chain, panic guard, deadlines, Finalizer barrier |
@@ -81,7 +82,7 @@ Lint (`.golangci.yml`) bans `http.DefaultClient`/`http.Get`, `log.Print*`,
 |---|---|---|
 | An extension (auth, hook, sink, admission) | `ext/<area>/<name>/` | [`add-extension`](.agents/skills/add-extension/SKILL.md) |
 | A provider wire format | `internal/normalise/<wire>.go` + `internal/fixtures/testdata` | [`add-provider`](.agents/skills/add-provider/SKILL.md) |
-| An `Options`/`Limits` field | `options.go` + test + `ARCHITECTURE.md` §6 | [`add-option`](.agents/skills/add-option/SKILL.md) |
+| An `Options`/`Limits` field | `options.go` + its mirror in `internal/core/options.go` + test + `ARCHITECTURE.md` §6 | [`add-option`](.agents/skills/add-option/SKILL.md) |
 | A model type or interface | `internal/model/` + alias in `model.go` | ADR first (it is public API) |
 | A boundary change | `docs/decisions/NNNN-*.md` | [`write-adr`](.agents/skills/write-adr/SKILL.md) |
 | A multi-file task | `plan/NNN-title.md` (git-ignored) | [`plan-task`](.agents/skills/plan-task/SKILL.md) |

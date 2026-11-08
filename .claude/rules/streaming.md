@@ -3,7 +3,7 @@ paths:
   - "internal/forward/**"
   - "internal/chain/**"
   - "internal/normalise/**"
-  - "tollgate.go"
+  - "internal/core/**"
 ---
 
 # Streaming path rules
