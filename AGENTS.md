@@ -24,7 +24,8 @@ scripts/install-hooks.sh          # once: pre-commit (fast) + pre-push (full gat
 scripts/run-checks.sh             # THE gate; CI runs exactly this
 scripts/run-checks.sh --fast       # inner loop: fmt vet arch docs size (seconds)
 scripts/quiet.sh go test -race ./internal/forward  # any command, failures-only output
-go -C cmd/tollgated run . serve -listen :8080
+go -C cmd/tollgated run . serve -listen :8080   # go.work: nested modules build against the checkout
+scripts/check-release.sh cmd/tollgated/v0.1.0  # before any tag (docs/runbooks/release.md)
 ```
 
 The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
@@ -50,6 +51,7 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 | `ext/<area>/<name>/` | Built-in and example extensions (public API only) |
 | `cmd/tollgated/` | The binary: flags → `Options` → serve → graceful shutdown |
 | `tools/` | Separate Go module pinning dev tools (golangci-lint, govulncheck) |
+| `go.work` | Workspace: root + nested modules, not `tools/` (ADR 0017); releases: `docs/runbooks/release.md` |
 
 ## Dependency law (enforced by `internal/archtest`)
 

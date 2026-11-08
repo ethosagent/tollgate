@@ -9,8 +9,21 @@ scripts/run-checks.sh         # first run builds pinned tools from tools/go.mod 
 ```
 
 Dev tools are pinned in `tools/go.mod` and run with
-`go tool -modfile=tools/go.mod <tool>`. Nothing to install globally. Bump them
-with `cd tools && go get -tool <module>@<version> && go mod tidy`.
+`GOWORK=off go tool -modfile=tools/go.mod <tool>` (`-modfile` is refused in
+workspace mode; the gates use `gotool` in `scripts/lib.sh`). Nothing to install
+globally. Bump them with `cd tools && go get -tool <module>@<version> && go mod tidy`.
+
+## Nested modules and go.work
+
+`cmd/tollgated` and `ext/metrics/postgres` are their own modules. The committed
+`go.work` (ADR 0017) makes every `go` command inside them build against this
+checkout's root code, not the root release their `go.mod` requires.
+
+- Add a nested module: `go work use ./ext/<area>/<name>` (archtest
+  `TestWorkspace` fails until you do).
+- Build as a consumer would (published root, no workspace): `GOWORK=off go -C cmd/tollgated build ./...`.
+- `go mod tidy` ignores `go.work`, so it needs the required root tag on the proxy.
+- Releasing: [`release.md`](release.md).
 
 ## Run
 

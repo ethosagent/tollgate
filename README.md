@@ -56,7 +56,8 @@ curl localhost:8080/openai/v1/chat/completions \
 
 Your app talks to `http://localhost:8080/openai` instead of
 `https://api.openai.com`. The other built-in providers are `/anthropic` and
-`/openrouter`. Requires Go 1.26 or later.
+`/openrouter`. Requires Go 1.26 or later. Or install a release:
+`go install github.com/ethosagent/tollgate/cmd/tollgated@latest`, or a binary from GitHub Releases.
 
 ### With a config file
 
