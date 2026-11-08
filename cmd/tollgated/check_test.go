@@ -31,10 +31,7 @@ func TestConfigCheck(t *testing.T) {
 			if code != tc.wantCode {
 				t.Fatalf("code = %d, want %d (stderr %s)", code, tc.wantCode, errb.String())
 			}
-			var res struct {
-				OK     bool     `json:"ok"`
-				Errors []string `json:"errors"`
-			}
+			var res checkResult
 			if err := json.Unmarshal(out.Bytes(), &res); err != nil {
 				t.Fatalf("stdout %q is not JSON: %v", out.String(), err)
 			}

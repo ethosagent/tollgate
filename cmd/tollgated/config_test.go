@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,10 @@ func prep(t *testing.T, yaml string, env map[string]string) (*prepared, []error)
 	return pr, errs
 }
 
+func prepareExample(env map[string]string) (*prepared, []error) {
+	return prepare(exampleConfig, overrides{}, envOf(env), io.Discard, slog.New(slog.DiscardHandler))
+}
+
 func joined(errs []error) string {
 	var b strings.Builder
 	for _, e := range errs {
@@ -36,7 +41,7 @@ func joined(errs []error) string {
 
 func TestExampleConfig_LoadsAndValidates(t *testing.T) {
 	env := map[string]string{"TOLLGATE_KEY_TEAM_A": "ka", "TOLLGATE_KEY_TEAM_B": "kb"}
-	pr, errs := prepare(exampleConfig, overrides{}, envOf(env), io.Discard, slog.New(slog.DiscardHandler))
+	pr, errs := prepareExample(env)
 	if len(errs) > 0 {
 		t.Fatalf("example config invalid: %s", joined(errs))
 	}
@@ -50,7 +55,7 @@ func TestExampleConfig_LoadsAndValidates(t *testing.T) {
 }
 
 func TestExampleConfig_NeedsItsEnvVars(t *testing.T) {
-	_, errs := prepare(exampleConfig, overrides{}, envOf(nil), io.Discard, slog.New(slog.DiscardHandler))
+	_, errs := prepareExample(nil)
 	got := joined(errs)
 	for _, v := range []string{"TOLLGATE_KEY_TEAM_A", "TOLLGATE_KEY_TEAM_B"} {
 		if !strings.Contains(got, v+" is not set") {
@@ -140,6 +145,8 @@ func TestPathResolver(t *testing.T) {
 		{"/local/v1/x", "local", "openai.chat", "/v1/x"},
 		{"/other/a/b", "other", "passthrough", "/a/b"},
 		{"/other", "other", "passthrough", "/"},
+		{"/other/", "other", "passthrough", "/"},
+		{"/other/a/b/c/", "other", "passthrough", "/a/b/c/"},
 	}
 	for _, tc := range tests {
 		p, rest, err := r.Resolve(context.Background(), tollgate.Tenant{}, httptest.NewRequest(http.MethodPost, tc.path, nil))
@@ -147,8 +154,10 @@ func TestPathResolver(t *testing.T) {
 			t.Errorf("%s: got %+v %q %v", tc.path, p, rest, err)
 		}
 	}
-	if _, _, err := r.Resolve(context.Background(), tollgate.Tenant{}, httptest.NewRequest(http.MethodGet, "/nope/x", nil)); err == nil {
-		t.Error("unknown provider must error")
+	for _, path := range []string{"/nope/x", "/otherx/a", "/", "/nope"} {
+		if _, _, err := r.Resolve(context.Background(), tollgate.Tenant{}, httptest.NewRequest(http.MethodGet, path, nil)); err == nil {
+			t.Errorf("%s: unknown provider must error", path)
+		}
 	}
 	if buildProviders(&collector{}, nil, envOf(nil)) != nil {
 		t.Error("no providers section must leave the built-in resolver")
@@ -167,11 +176,24 @@ func TestSnake(t *testing.T) {
 }
 
 func TestLimits_EveryFieldIsConfigurable(t *testing.T) {
-	// Each tollgate.Limits field has a key; the example's keys all resolve.
-	c := &collector{}
 	var l tollgate.Limits
-	applyLimits(c, map[string]any{"session_ttl": "1m", "min_nope": 1, "metric_batch": 5}, &l)
-	if l.SessionTTL != time.Minute || l.MetricBatch != 5 || !strings.Contains(joined(c.errs), "limits.min_nope: unknown limit") {
-		t.Errorf("limits = %+v, errs = %s", l, joined(c.errs))
+	v := reflect.ValueOf(&l).Elem()
+	raw := map[string]any{"min_nope": 1}
+	for i := range v.NumField() {
+		if v.Field(i).Type() == reflect.TypeFor[time.Duration]() {
+			raw[snake(v.Type().Field(i).Name)] = "1s"
+		} else {
+			raw[snake(v.Type().Field(i).Name)] = 7
+		}
+	}
+	c := &collector{}
+	applyLimits(c, raw, &l)
+	for i := range v.NumField() {
+		if v.Field(i).IsZero() {
+			t.Errorf("limits.%s was not applied", snake(v.Type().Field(i).Name))
+		}
+	}
+	if got := joined(c.errs); got != "limits.min_nope: unknown limit\n" {
+		t.Errorf("errs = %q, want only the unknown key", got)
 	}
 }

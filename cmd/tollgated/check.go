@@ -38,27 +38,24 @@ func runConfigCheck(ctx context.Context, args []string, stdout, stderr io.Writer
 		defer cancel()
 		_ = pr.proxy.Close(ctx) // New started a session sweeper; nothing was served
 	}
-	res := checkResult{OK: len(errs) == 0, Errors: make([]string, 0, len(errs))}
-	for _, err := range errs {
-		res.Errors = append(res.Errors, err.Error())
-	}
-	writeCheck(res, *asJSON, stdout, stderr)
-	if !res.OK {
+	writeCheck(errs, *asJSON, stdout, stderr)
+	if len(errs) > 0 {
 		return 1
 	}
 	return 0
 }
 
-func writeCheck(res checkResult, asJSON bool, stdout, stderr io.Writer) {
+func writeCheck(errs []error, asJSON bool, stdout, stderr io.Writer) {
 	switch {
 	case asJSON:
+		res := checkResult{OK: len(errs) == 0, Errors: make([]string, 0, len(errs))}
+		for _, err := range errs {
+			res.Errors = append(res.Errors, err.Error())
+		}
 		_ = json.NewEncoder(stdout).Encode(res)
-	case res.OK:
+	case len(errs) == 0:
 		_, _ = fmt.Fprintln(stdout, "config ok")
 	default:
-		_, _ = fmt.Fprintf(stderr, "tollgated: invalid config (%d problems)\n", len(res.Errors))
-		for _, e := range res.Errors {
-			_, _ = fmt.Fprintf(stderr, "  - %s\n", e)
-		}
+		reportErrors(stderr, errs)
 	}
 }

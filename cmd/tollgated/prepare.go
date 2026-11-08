@@ -1,9 +1,11 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"time"
 
 	"github.com/ethosagent/tollgate"
@@ -88,8 +90,20 @@ func checkAddrs(c *collector, pr *prepared) {
 		if a.addr == "" {
 			continue
 		}
-		if err := validAddr(a.addr); err != nil {
+		if _, _, err := net.SplitHostPort(a.addr); err != nil {
 			c.add(fmt.Errorf("%s: %q is not a host:port address", a.field, a.addr))
 		}
 	}
+}
+
+// flatten splits an errors.Join result into its parts.
+func flatten(err error) []error {
+	if err == nil {
+		return nil
+	}
+	var j interface{ Unwrap() []error }
+	if errors.As(err, &j) {
+		return j.Unwrap()
+	}
+	return []error{err}
 }

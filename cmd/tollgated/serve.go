@@ -71,7 +71,10 @@ func serveProxy(ctx context.Context, pr *prepared, path string, logger *slog.Log
 		return 1
 	}
 	code := 0
-	if err := listenAndServe(ctx, pr, logger); err != nil {
+	if eps, err := listenAll(ctx, pr); err != nil {
+		logger.Error("listen failed", "err", err)
+		code = 1
+	} else if err := serve(ctx, eps, pr.shutdown, logger); err != nil {
 		logger.Error("server stopped", "err", err)
 		code = 1
 	}
@@ -84,24 +87,28 @@ func serveProxy(ctx context.Context, pr *prepared, path string, logger *slog.Log
 	return code
 }
 
-func listenAndServe(ctx context.Context, pr *prepared, logger *slog.Logger) error {
+// listenAll opens the proxy listener and, when configured, the admin one. On
+// failure it closes whatever it already opened.
+func listenAll(ctx context.Context, pr *prepared) ([]endpoint, error) {
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", pr.listen)
-	if err != nil {
-		logger.Error("listen failed", "addr", pr.listen, "err", err)
-		return errors.New("listen failed")
-	}
-	eps := []endpoint{{"proxy", ln, pr.proxy.Handler()}}
-	if pr.adminListen != "" {
-		aln, err := lc.Listen(ctx, "tcp", pr.adminListen)
-		if err != nil {
-			_ = ln.Close()
-			logger.Error("listen failed", "addr", pr.adminListen, "err", err)
-			return errors.New("listen failed")
+	var eps []endpoint
+	for _, e := range []struct {
+		name, addr string
+		h          http.Handler
+	}{{"proxy", pr.listen, pr.proxy.Handler()}, {"admin", pr.adminListen, pr.proxy.AdminHandler()}} {
+		if e.addr == "" {
+			continue
 		}
-		eps = append(eps, endpoint{"admin", aln, pr.proxy.AdminHandler()})
+		ln, err := lc.Listen(ctx, "tcp", e.addr)
+		if err != nil {
+			for _, open := range eps {
+				_ = open.ln.Close()
+			}
+			return nil, fmt.Errorf("listen %s %s: %w", e.name, e.addr, err)
+		}
+		eps = append(eps, endpoint{e.name, ln, e.h})
 	}
-	return serve(ctx, eps, pr.shutdown, logger)
+	return eps, nil
 }
 
 // serve runs every endpoint until ctx is done (or one fails), then stops

@@ -17,7 +17,9 @@ var (
 
 // pathResolver is a ProviderResolver over the configured providers table: the
 // first path segment names the provider. The core still applies the
-// upstream-override header and checks the final target (ADR 0007).
+// upstream-override header and checks the final target (ADR 0007). It mirrors
+// internal/resolve.Resolver, which cmd cannot import; a public constructor
+// would remove the copy.
 type pathResolver struct{ providers map[string]tollgate.Provider }
 
 // errUnknownProvider carries no status, so the proxy answers 404.
@@ -28,12 +30,16 @@ func (pathResolver) InlineSafe() {}
 
 // Resolve implements tollgate.ProviderResolver.
 func (r pathResolver) Resolve(_ context.Context, _ tollgate.Tenant, req *http.Request) (tollgate.Provider, string, error) {
-	seg, rest, _ := strings.Cut(strings.TrimPrefix(req.URL.Path, "/"), "/")
+	path := strings.TrimPrefix(req.URL.Path, "/")
+	seg, rest := path, "/"
+	if i := strings.IndexByte(path, '/'); i >= 0 {
+		seg, rest = path[:i], path[i:]
+	}
 	p, ok := r.providers[seg]
 	if !ok {
 		return tollgate.Provider{}, "", errUnknownProvider
 	}
-	return p, "/" + rest, nil
+	return p, rest, nil
 }
 
 // defaultWire picks a wire format from the provider name when the config

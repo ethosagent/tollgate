@@ -1,10 +1,8 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
-	"net"
 	"sort"
 
 	"github.com/ethosagent/tollgate"
@@ -135,22 +133,4 @@ func buildMetrics(c *collector, m *metricsConfig, out io.Writer) (tollgate.Metri
 		c.addf("metrics.sink: %q is not supported (stdout or none)", m.Sink)
 	}
 	return nil, "none"
-}
-
-// flatten splits an errors.Join result into its parts.
-func flatten(err error) []error {
-	if err == nil {
-		return nil
-	}
-	var j interface{ Unwrap() []error }
-	if errors.As(err, &j) {
-		return j.Unwrap()
-	}
-	return []error{err}
-}
-
-// validAddr reports whether addr is a host:port the listener can parse.
-func validAddr(addr string) error {
-	_, _, err := net.SplitHostPort(addr)
-	return err
 }
