@@ -55,3 +55,22 @@ func TestWorkspaceUses_Normalises(t *testing.T) {
 		t.Errorf("workspaceUses = %q, %v; want %q", got, err, want)
 	}
 }
+
+// TestNestedModules_ShellAndGoAgree pins the two copies of the "what is a
+// nested module" rule together: scripts/lib.sh nested_modules (each_module,
+// check-release.sh) and nestedModuleDirs (archtest, TestWorkspace). If one
+// changes alone, the gates would check different module sets.
+func TestNestedModules_ShellAndGoAgree(t *testing.T) {
+	root := moduleRoot(t)
+	cmd := exec.Command("bash", "-c", ". scripts/lib.sh && nested_modules")
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("scripts/lib.sh nested_modules: %v", err)
+	}
+	shell := strings.Fields(string(out))
+	slices.Sort(shell)
+	if goDirs := nestedModuleDirs(t, root); !slices.Equal(shell, goDirs) {
+		t.Errorf("scripts/lib.sh nested_modules = %q, archtest nestedModuleDirs = %q: change both rules together", shell, goDirs)
+	}
+}
