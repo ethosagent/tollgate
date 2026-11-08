@@ -22,5 +22,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0014](0014-fixtures-leaf-and-testkit-harness.md) | Fixtures in a leaf package; testkit's harness imports the root | Accepted |
 | [0015](0015-inline-safe-extensions-run-without-a-deadline-goroutine.md) | InlineSafe extensions run without a deadline goroutine | Accepted |
 | [0016](0016-thin-root-package-implementation-in-internal-core.md) | Thin root package; the implementation lives in `internal/core` | Accepted |
+| [0017](0017-go-work-for-nested-modules-no-replace-in-releases.md) | A committed go.work builds nested modules; releases carry no replace | Accepted |
 
 Template: [`template.md`](template.md).

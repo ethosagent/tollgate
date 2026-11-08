@@ -10,7 +10,18 @@ MAX_SKILL_DESC=250                  # SKILL.md description, characters
 # gotool runs a tool pinned in tools/go.mod (ADR 0005). CGO_ENABLED=0: every
 # pinned tool is pure Go, so a broken host C toolchain cannot break the gate.
 # Do not use it for `go test -race`, which needs cgo.
-gotool() { CGO_ENABLED=0 go tool -modfile="$REPO_ROOT/tools/go.mod" "$@"; }
+# `go tool -modfile` is refused in workspace mode (go.work, ADR 0017), so the
+# tool is built with GOWORK=off and `-n` prints its cached binary; the binary
+# then runs with the caller's env, so it still sees the workspace and type-checks
+# nested modules against the checkout's root code. GOROOT/bin goes first on
+# PATH, as `go tool` itself does.
+gotool() {
+  local bin goroot
+  bin="$(GOWORK=off CGO_ENABLED=0 go tool -modfile="$REPO_ROOT/tools/go.mod" -n "$1")" || return 1
+  goroot="$(go env GOROOT)" || return 1
+  shift
+  CGO_ENABLED=0 PATH="$goroot/bin:$PATH" "$bin" "$@"
+}
 
 # REPO_ROOT is absolute so gotool also works from inside a nested module.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
