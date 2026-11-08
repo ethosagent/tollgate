@@ -13,6 +13,7 @@ import (
 	"github.com/ethosagent/tollgate/internal/forward"
 	"github.com/ethosagent/tollgate/internal/model"
 	"github.com/ethosagent/tollgate/internal/normalise"
+	"github.com/ethosagent/tollgate/internal/resolve"
 )
 
 // serveProxy runs the pipeline: Auth, Admission, ProviderResolver, target
@@ -108,6 +109,7 @@ type resolved struct {
 
 func (p *Proxy) resolve(ctx context.Context, r *http.Request, t model.Tenant) (resolved, error) {
 	prov, rest, err := p.opts.Providers.Resolve(ctx, t, r)
+	prov.Wire = resolve.WireForRest(prov.Wire, rest) // for every resolver (ADR 0018)
 	return resolved{prov: prov, rest: rest}, err
 }
 

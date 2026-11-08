@@ -20,6 +20,11 @@ func TestResolver_PrefixTable(t *testing.T) {
 		{"/anthropic/v1/messages", "anthropic", "/v1/messages", "https://api.anthropic.com", model.WireAnthropicMessages},
 		{"/openrouter/v1/models", "openrouter", "/v1/models", "https://openrouter.ai/api", model.WireOpenAIChat},
 		{"/openai", "openai", "/", "https://api.openai.com", model.WireOpenAIChat},
+		{"/openai/v1/responses", "openai", "/v1/responses", "https://api.openai.com", model.WireOpenAIResponses},
+		{"/openai/v1/responses/", "openai", "/v1/responses/", "https://api.openai.com", model.WireOpenAIResponses},
+		{"/openrouter/v1/responses", "openrouter", "/v1/responses", "https://openrouter.ai/api", model.WireOpenAIResponses},
+		{"/openai/v1/responses/resp_1/cancel", "openai", "/v1/responses/resp_1/cancel", "https://api.openai.com", model.WireOpenAIChat},
+		{"/anthropic/v1/responses", "anthropic", "/v1/responses", "https://api.anthropic.com", model.WireAnthropicMessages},
 	}
 	for _, tt := range tests {
 		t.Run(tt.path, func(t *testing.T) {
@@ -56,6 +61,10 @@ func TestWireForPath(t *testing.T) {
 		"/openai/v1/chat/completions": model.WireOpenAIChat,
 		"/anthropic/v1/messages":      model.WireAnthropicMessages,
 		"/openrouter/v1/x":            model.WireOpenAIChat,
+		"/openai/v1/responses":        model.WireOpenAIResponses,
+		"/openrouter/v1/responses":    model.WireOpenAIResponses,
+		"/anthropic/v1/responses":     model.WireAnthropicMessages,
+		"/mystery/v1/responses":       model.WirePassthrough,
 		"/mystery/v1/x":               model.WirePassthrough,
 		"/":                           model.WirePassthrough,
 		"":                            model.WirePassthrough,
@@ -63,5 +72,27 @@ func TestWireForPath(t *testing.T) {
 		if got := WireForPath(path); got != want {
 			t.Errorf("WireForPath(%q) = %q, want %q", path, got, want)
 		}
+	}
+}
+
+func TestWireForRest(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		wire model.WireFormat
+		rest string
+		want model.WireFormat
+	}{
+		{"chat provider on responses", model.WireOpenAIChat, "/v1/responses", model.WireOpenAIResponses},
+		{"chat provider on chat", model.WireOpenAIChat, "/v1/chat/completions", model.WireOpenAIChat},
+		{"already responses", model.WireOpenAIResponses, "/v1/responses", model.WireOpenAIResponses},
+		{"passthrough is never upgraded", model.WirePassthrough, "/v1/responses", model.WirePassthrough},
+		{"anthropic is never upgraded", model.WireAnthropicMessages, "/v1/responses", model.WireAnthropicMessages},
+		{"lookalike path", model.WireOpenAIChat, "/v1/responses-x", model.WireOpenAIChat},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := WireForRest(tt.wire, tt.rest); got != tt.want {
+				t.Fatalf("WireForRest(%q, %q) = %q, want %q", tt.wire, tt.rest, got, tt.want)
+			}
+		})
 	}
 }

@@ -24,8 +24,11 @@ func responseFixtures() []string {
 func requestBody(t testing.TB, fixture string) []byte {
 	t.Helper()
 	name := "openai/request-chat-stream"
-	if strings.HasPrefix(fixture, "anthropic/") {
+	switch {
+	case strings.HasPrefix(fixture, "anthropic/"):
 		name = "anthropic/request-messages-stream"
+	case fixtures.PathFor(fixture) == fixtures.OpenAIResponsesPath:
+		name = "openai/request-responses-stream"
 	}
 	b, err := fixtures.Bytes(name)
 	if err != nil {

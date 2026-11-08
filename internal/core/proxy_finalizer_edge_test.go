@@ -18,6 +18,7 @@ func TestFinalizer_ReplaceSendsTheReplacementTerminal(t *testing.T) {
 	repl := map[string]string{
 		"openai":    "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"content_filter\"}]}\n\ndata: [DONE]\n\n",
 		"anthropic": "event: message_delta\ndata: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"refusal\"}}\n\nevent: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+		"responses": "event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"content_filter\"}}}\n\n",
 	}
 	for _, wc := range wireCases {
 		t.Run(wc.name, func(t *testing.T) {
@@ -26,7 +27,7 @@ func TestFinalizer_ReplaceSendsTheReplacementTerminal(t *testing.T) {
 				return model.Decision{Action: model.DecisionReplace, Response: &model.Response{Body: []byte(repl[wc.name])}}
 			}}
 			got := callWith(t, finalizerProxy(t, core.Options{}, f), wc, newSeqUpstream(t, first))
-			cut := bytes.Index(first, []byte(map[string]string{"openai": `"finish_reason":"stop"`, "anthropic": "event: message_delta"}[wc.name]))
+			cut := bytes.Index(first, []byte(map[string]string{"openai": `"finish_reason":"stop"`, "anthropic": "event: message_delta", "responses": "event: response.completed"}[wc.name]))
 			cut = bytes.LastIndex(first[:cut], []byte("\n\n")) + 2
 			if want := append(append([]byte(nil), first[:cut]...), repl[wc.name]...); !bytes.Equal(got, want) {
 				t.Fatalf("client bytes\n got %q\nwant %q", got, want)

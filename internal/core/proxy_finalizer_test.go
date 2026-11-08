@@ -80,6 +80,12 @@ var wireCases = []wireCase{
 	{"openai", "/openai/v1/chat/completions", "openai/chat-stream-text", "data: {\"id\":\"chatcmpl-two\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"finish_reason\":null}]}\n\n" +
 		"data: {\"id\":\"chatcmpl-two\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\" Again\"},\"finish_reason\":null}]}\n\n" +
 		"data: {\"id\":\"chatcmpl-two\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n", "[DONE]"},
+	{"responses", "/openai/v1/responses", "openai/responses-stream-text",
+		"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_fixture_two\",\"status\":\"in_progress\"}}\n\n" +
+			"event: response.in_progress\ndata: {\"type\":\"response.in_progress\",\"response\":{\"id\":\"resp_fixture_two\"}}\n\n" +
+			"event: response.output_item.added\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"id\":\"msg_fixture_two\",\"type\":\"message\"}}\n\n" +
+			"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\" Again\"}\n\n" +
+			"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":3,\"output_tokens\":3}}}\n\n", "event: response.completed"},
 	{"anthropic", "/anthropic/v1/messages", "anthropic/messages-stream-text", "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":3}}}\n\n" +
 		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n" +
 		"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" Again\"}}\n\n" +
@@ -139,6 +145,14 @@ func TestFinalizer_RecoverOnceThenRelease(t *testing.T) {
 			}
 			if wc.name == "anthropic" && strings.Count(got, "event: message_start") != 1 {
 				t.Errorf("the client must see one message_start:\n%s", got)
+			}
+			if wc.name == "responses" {
+				if n := strings.Count(got, "event: response.created"); n != 1 {
+					t.Errorf("the client must see one response.created, saw %d:\n%s", n, got)
+				}
+				if !strings.Contains(got, `"output_index":1`) {
+					t.Errorf("the recovery's output item must continue after the original's:\n%s", got)
+				}
 			}
 			if f.calls.Load() != 2 {
 				t.Errorf("Decide ran %d times, want 2 (recover, then release)", f.calls.Load())

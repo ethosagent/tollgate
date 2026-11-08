@@ -24,9 +24,9 @@ func Fixture(name string) ([]byte, error) { return fixtures.Bytes(name) }
 func Chunks(name string) [][]byte { return fixtures.Chunks(name) }
 
 // PathFor returns the upstream API path a fixture's provider serves:
-// "/v1/messages" for "anthropic/..." fixtures, "/v1/chat/completions" for
-// the rest. A proxy test prefixes it with the provider, e.g.
-// "/anthropic" + PathFor(name).
+// "/v1/messages" for "anthropic/..." fixtures, "/v1/responses" for the
+// "openai/responses..." ones, "/v1/chat/completions" for the rest. A proxy
+// test prefixes it with the provider, e.g. "/anthropic" + PathFor(name).
 func PathFor(fixture string) string { return fixtures.PathFor(fixture) }
 
 // RequestFor returns the provider path prefix ("openai" or "anthropic") and a

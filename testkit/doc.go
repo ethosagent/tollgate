@@ -2,8 +2,8 @@
 // a network or real keys.
 //
 // FakeUpstream is an httptest server that replays recorded, scrubbed provider
-// responses (OpenAI chat completions and Anthropic messages, streaming and
-// JSON, plus error bodies) byte for byte, with knobs for latency and failure:
+// responses (OpenAI chat completions, OpenAI Responses and Anthropic
+// messages, streaming and JSON, plus error bodies) byte for byte, with knobs for latency and failure:
 //
 //	up := testkit.NewFakeUpstream(t, testkit.Options{ChunkDelay: 10 * time.Millisecond})
 //	req.Header.Set(testkit.FixtureHeader, "anthropic/messages-stream-tool-use")

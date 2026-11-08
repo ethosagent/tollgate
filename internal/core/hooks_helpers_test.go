@@ -75,8 +75,11 @@ func newHookedProxy(t testing.TB, opts core.Options, hooks ...model.Hook) (strin
 func expectedEvents(t testing.TB, fixture string) []model.Event {
 	t.Helper()
 	wire := model.WireOpenAIChat
-	if fixture[:9] == "anthropic" {
+	switch {
+	case fixture[:9] == "anthropic":
 		wire = model.WireAnthropicMessages
+	case fixtures.PathFor(fixture) == fixtures.OpenAIResponsesPath:
+		wire = model.WireOpenAIResponses
 	}
 	w, err := normalise.ForWire(wire)
 	if err != nil {

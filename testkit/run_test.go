@@ -106,6 +106,48 @@ func TestRun_RecordsHookLifecycle(t *testing.T) {
 	}
 }
 
+// TestRun_DrivesAHookThroughResponsesFixtures: the harness replays the
+// Responses API fixtures on the Responses wire, so a host's monitor tests can
+// target them (Plan 08).
+func TestRun_DrivesAHookThroughResponsesFixtures(t *testing.T) {
+	rec := testkit.Run(t, probeHook{}, "openai/responses-stream-tools", "openai/responses")
+	befores := rec.Of(testkit.StageBefore)
+	if len(befores) != 2 {
+		t.Fatalf("Before calls = %d, want 2", len(befores))
+	}
+	for _, b := range befores {
+		if b.Call.Provider.Wire != tollgate.WireOpenAIResponses || b.Call.Model != "gpt-4.1-mini" || len(b.Call.Messages) != 2 {
+			t.Fatalf("Before saw wire %q model %q messages %+v", b.Call.Provider.Wire, b.Call.Model, b.Call.Messages)
+		}
+	}
+	var tool *tollgate.ToolCallDelta
+	for _, e := range rec.Of(testkit.StageOnEvent) {
+		if e.Event.Kind == tollgate.EventToolCallDelta && e.Event.ToolCall.Name != "" {
+			tool = e.Event.ToolCall
+		}
+	}
+	if tool == nil || tool.Name != "get_weather" || tool.ID != "call_fixture001" {
+		t.Fatalf("OnEvent never saw the Responses tool call: %+v", tool)
+	}
+	after := rec.Of(testkit.StageAfter)
+	if len(after) != 2 || after[0].Metric.Usage.OutputTokens != 11 || after[1].Metric.Usage.OutputTokens != 2 {
+		t.Fatalf("After metrics = %+v", after)
+	}
+	want, _ := testkit.Fixture("openai/responses-stream-tools")
+	if !bytes.Equal(rec.Replies[0].Body, want) {
+		t.Fatal("reply is not the fixture byte for byte")
+	}
+}
+
+func TestRun_FinalizerSeesAResponsesSummary(t *testing.T) {
+	rec := testkit.Run(t, releaseFinalizer{}, "openai/responses-stream-tools")
+	d := rec.Of(testkit.StageDecide)
+	if len(d) != 1 || d[0].Summary.FinishReason != "completed" || len(d[0].Summary.ToolCalls) != 1 ||
+		d[0].Summary.ToolCalls[0].Name != "get_weather" || d[0].Summary.Usage.InputTokens != 40 {
+		t.Fatalf("Decide = %+v", d)
+	}
+}
+
 func TestRun_OrderIsDeterministic(t *testing.T) {
 	first := testkit.Run(t, probeHook{}, "openai/chat-stream-text", "openai/chat").Stages()
 	for i := range 20 {

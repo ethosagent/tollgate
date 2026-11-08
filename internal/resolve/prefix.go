@@ -52,19 +52,37 @@ func (r *Resolver) Resolve(_ context.Context, _ model.Tenant, req *http.Request)
 	if !ok {
 		return model.Provider{}, "", ErrUnknownProvider
 	}
+	p.Wire = WireForRest(p.Wire, rest)
 	return p, rest, nil
+}
+
+// ResponsesPath is the upstream path of the OpenAI Responses create call.
+const ResponsesPath = "/v1/responses"
+
+// WireForRest picks the wire format of one request from its provider's wire
+// and the upstream path after the provider prefix. An OpenAI-compatible
+// provider (WireOpenAIChat) speaks the Responses wire on exactly
+// ResponsesPath; every other wire and path is returned unchanged, so a
+// resolver that declares a provider pass-through or Anthropic is never
+// overridden (docs/decisions/0018).
+func WireForRest(w model.WireFormat, rest string) model.WireFormat {
+	if w == model.WireOpenAIChat && strings.TrimSuffix(rest, "/") == ResponsesPath {
+		return model.WireOpenAIResponses
+	}
+	return w
 }
 
 // InlineSafe implements model.InlineSafe: Resolve is a map lookup.
 func (*Resolver) InlineSafe() {}
 
 // WireForPath guesses the wire format from the path prefix using the
-// built-in table, before any resolver has run (to shape early errors).
+// built-in table, before any resolver has run (to shape early errors). The
+// path after the prefix picks the Responses wire as WireForRest does.
 // Unknown prefixes are WirePassthrough.
 func WireForPath(path string) model.WireFormat {
-	seg, _ := split(path)
+	seg, rest := split(path)
 	if p, ok := builtin[seg]; ok {
-		return p.Wire
+		return WireForRest(p.Wire, rest)
 	}
 	return model.WirePassthrough
 }
