@@ -87,6 +87,12 @@ func decodeConfig(r io.Reader) (*fileConfig, []error) {
 	dec.KnownFields(true)
 	cfg := &fileConfig{}
 	err := dec.Decode(cfg)
+	if err == nil {
+		var extra yaml.Node
+		if err2 := dec.Decode(&extra); !errors.Is(err2, io.EOF) {
+			return cfg, []error{errors.New("config: more than one YAML document")}
+		}
+	}
 	if err == nil || errors.Is(err, io.EOF) {
 		return cfg, nil
 	}
@@ -104,6 +110,10 @@ func decodeConfig(r io.Reader) (*fileConfig, []error) {
 // envRef matches ${VAR} and ${VAR:-default}.
 var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)
 
+// bareRef matches a shell-style $NAME that expand would leave literal. It is
+// applied to the text outside ${...} so an env value is never inspected.
+var bareRef = regexp.MustCompile(`\$[A-Za-z_]`)
+
 // lookupFunc reads one environment variable (os.LookupEnv in production).
 type lookupFunc func(string) (string, bool)
 
@@ -111,6 +121,10 @@ type lookupFunc func(string) (string, bool)
 // without a ":-default" is a config error that names the variable, never a
 // value. Only secret-bearing and address-like fields go through expand.
 func (c *collector) expand(field, s string, lookup lookupFunc) string {
+	if bareRef.MatchString(envRef.ReplaceAllString(s, "")) {
+		c.addf("%s: $NAME-style reference is not expanded; use ${NAME}", field)
+		return ""
+	}
 	return envRef.ReplaceAllStringFunc(s, func(ref string) string {
 		m := envRef.FindStringSubmatch(ref)
 		v, ok := lookup(m[1])

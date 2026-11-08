@@ -34,6 +34,10 @@ func runServe(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if fs.NArg() > 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: tollgated serve [-config FILE] [-listen ADDR] [-admin-listen ADDR] [-shutdown-timeout D]")
+		return 2
+	}
 	fs.Visit(func(f *flag.Flag) {
 		switch f.Name {
 		case "listen":

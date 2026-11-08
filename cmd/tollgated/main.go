@@ -71,6 +71,10 @@ func runVersion(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
+	if fs.NArg() > 0 {
+		_, _ = fmt.Fprintln(stderr, "usage: tollgated version [-json]")
+		return 2
+	}
 	if !*asJSON {
 		_, _ = fmt.Fprintln(stdout, buildVersion())
 		return 0
