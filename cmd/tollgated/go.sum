@@ -1,2 +1,4 @@
+github.com/ethosagent/tollgate v0.1.0 h1:0fuiXZYmWDCzshK1t6JHuelH2Mf5YEYx332Q8QiwqyM=
+github.com/ethosagent/tollgate v0.1.0/go.mod h1:B1n7RQ8YEqoG2z0mN/QqFvnRvDzy+AwDtDJb6sE5JR0=
 go.yaml.in/yaml/v3 v3.0.6 h1:zcDfvjXEqTQmpjniUBLc91xYJMB2c4QOFxEF/LCEckM=
 go.yaml.in/yaml/v3 v3.0.6/go.mod h1:HVTZu1O7/Vkt2N+BFy8Zza+lnLsABggaTM2ZpNIGuKg=
