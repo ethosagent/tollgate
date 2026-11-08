@@ -1,0 +1,3 @@
+{"kind":"text","text":"Hello world"}
+{"kind":"finish","finish":"completed"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":2,"CachedInputTokens":0,"ReasoningTokens":0}}

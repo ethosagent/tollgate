@@ -12,6 +12,8 @@ func TestDefault_PicksFixtureFromPathAndStreamFlag(t *testing.T) {
 	}{
 		{"openai buffered", "/openai" + OpenAIChatPath, `{}`, "openai/chat"},
 		{"openai streamed", "/openai" + OpenAIChatPath, `{"stream":true}`, "openai/chat-stream-text"},
+		{"responses buffered", "/openai" + OpenAIResponsesPath, `{}`, "openai/responses"},
+		{"responses streamed", "/openai" + OpenAIResponsesPath, `{"stream":true}`, "openai/responses-stream-text"},
 		{"anthropic buffered", AnthropicMessagesPath, `{"stream":false}`, "anthropic/messages"},
 		{"anthropic streamed", AnthropicMessagesPath, `{"stream":true}`, "anthropic/messages-stream-text"},
 		{"body not JSON counts as buffered", OpenAIChatPath, `not json`, "openai/chat"},

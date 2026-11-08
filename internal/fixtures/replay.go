@@ -22,6 +22,10 @@ func Default(path string, body []byte) string {
 		return "openai/chat-stream-text"
 	case strings.HasSuffix(path, OpenAIChatPath):
 		return "openai/chat"
+	case strings.HasSuffix(path, OpenAIResponsesPath) && req.Stream:
+		return "openai/responses-stream-text"
+	case strings.HasSuffix(path, OpenAIResponsesPath):
+		return "openai/responses"
 	case strings.HasSuffix(path, AnthropicMessagesPath) && req.Stream:
 		return "anthropic/messages-stream-text"
 	case strings.HasSuffix(path, AnthropicMessagesPath):

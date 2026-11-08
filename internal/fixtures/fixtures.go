@@ -28,6 +28,7 @@ var exts = []string{".sse", ".json"}
 // Provider API paths a fixture's provider serves.
 const (
 	OpenAIChatPath        = "/v1/chat/completions"
+	OpenAIResponsesPath   = "/v1/responses"
 	AnthropicMessagesPath = "/v1/messages"
 )
 
@@ -130,10 +131,21 @@ func Provider(name string) string {
 	return "openai"
 }
 
-// PathFor returns the upstream API path a fixture's provider serves.
+// isResponses reports whether name is an OpenAI Responses API fixture:
+// "openai/responses..." or "openai/request-responses...".
+func isResponses(name string) bool {
+	_, base := path.Split(name)
+	return Provider(name) == "openai" &&
+		(strings.HasPrefix(base, "responses") || strings.HasPrefix(base, "request-responses"))
+}
+
+// PathFor returns the upstream API path a fixture's wire serves.
 func PathFor(name string) string {
-	if Provider(name) == "anthropic" {
+	switch {
+	case Provider(name) == "anthropic":
 		return AnthropicMessagesPath
+	case isResponses(name):
+		return OpenAIResponsesPath
 	}
 	return OpenAIChatPath
 }
@@ -145,6 +157,10 @@ func Request(name string) []byte {
 	if Provider(name) == "anthropic" {
 		return fmt.Appendf(nil,
 			`{"model":"claude-sonnet-4-5","max_tokens":256,"stream":%t,"messages":[{"role":"user","content":"Say hello."}]}`, stream)
+	}
+	if isResponses(name) {
+		return fmt.Appendf(nil,
+			`{"model":"gpt-4.1-mini","stream":%t,"instructions":"You are a coding agent.","input":"Say hello."}`, stream)
 	}
 	return fmt.Appendf(nil,
 		`{"model":"gpt-4.1-mini","stream":%t,"messages":[{"role":"system","content":"You are a coding agent."},{"role":"user","content":"Say hello."}]}`, stream)

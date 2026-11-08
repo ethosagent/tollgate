@@ -58,6 +58,9 @@ func TestDerivedProperties(t *testing.T) {
 	}{
 		{"openai/chat-stream-text", "openai", OpenAIChatPath, "text/event-stream", 200, true, true},
 		{"openai/chat", "openai", OpenAIChatPath, "application/json", 200, true, false},
+		{"openai/responses-stream-tools", "openai", OpenAIResponsesPath, "text/event-stream", 200, true, true},
+		{"openai/responses", "openai", OpenAIResponsesPath, "application/json", 200, true, false},
+		{"openai/request-responses-tools", "openai", OpenAIResponsesPath, "application/json", 200, false, false},
 		{"anthropic/messages-stream-text", "anthropic", AnthropicMessagesPath, "text/event-stream", 200, true, true},
 		{"anthropic/error-429", "anthropic", AnthropicMessagesPath, "application/json", 429, true, false},
 		{"openai/request-chat-stream", "openai", OpenAIChatPath, "application/json", 200, false, false},
