@@ -62,7 +62,12 @@ const (
 
 	WireOpenAIChat        = model.WireOpenAIChat
 	WireAnthropicMessages = model.WireAnthropicMessages
+	WireOpenAIResponses   = model.WireOpenAIResponses
 	WirePassthrough       = model.WirePassthrough
+
+	MetaPreviousResponseID = model.MetaPreviousResponseID
+	MetaReasoningEffort    = model.MetaReasoningEffort
+	MetaReasoningSummary   = model.MetaReasoningSummary
 
 	RoleSystem    = model.RoleSystem
 	RoleUser      = model.RoleUser

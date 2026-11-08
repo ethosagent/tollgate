@@ -65,8 +65,24 @@ type WireFormat string
 const (
 	WireOpenAIChat        WireFormat = "openai.chat"
 	WireAnthropicMessages WireFormat = "anthropic.messages"
+	// WireOpenAIResponses is the OpenAI Responses API (POST /v1/responses),
+	// the wire Codex and OpenCode speak. A provider keeps WireOpenAIChat; the
+	// core selects this wire per request from the upstream path
+	// (docs/decisions/0018).
+	WireOpenAIResponses WireFormat = "openai.responses"
 	// WirePassthrough is any other path: forwarded untouched, metrics only.
 	WirePassthrough WireFormat = "passthrough"
+)
+
+// Call.Meta keys the Responses wire fills from the request body. Values are
+// strings. A key is absent when the request did not set the field.
+const (
+	// MetaPreviousResponseID is the request's previous_response_id.
+	MetaPreviousResponseID = "openai.previous_response_id"
+	// MetaReasoningEffort is the request's reasoning.effort.
+	MetaReasoningEffort = "openai.reasoning_effort"
+	// MetaReasoningSummary is the request's reasoning.summary.
+	MetaReasoningSummary = "openai.reasoning_summary"
 )
 
 // Provider is an upstream API family, its wire format and base URL.
