@@ -35,10 +35,10 @@ jobs:
     env:
       TOLLGATE_TEST_PG_DSN: postgres://tollgate:tollgate@127.0.0.1:5432/tollgate_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the guard needs the root tags reachable from HEAD
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache-dependency-path: |
@@ -52,7 +52,7 @@ jobs:
         run: scripts/run-checks.sh
       - name: Upload gate logs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-gate-logs
           path: .logs/
@@ -68,8 +68,8 @@ jobs:
         goos: [linux, darwin, windows]
         goarch: [amd64, arm64]
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
           cache-dependency-path: cmd/tollgated/go.sum
@@ -92,7 +92,7 @@ jobs:
           if [ "$GOOS" = windows ]; then zip -qr "$name.zip" "$name"; else tar -czf "$name.tar.gz" "$name"; fi
           rm -rf "$name"
           ls -l
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: tollgated-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
@@ -105,7 +105,7 @@ jobs:
     permissions:
       contents: write # gh release create; this job only
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: tollgated-*
           path: dist
