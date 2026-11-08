@@ -1,0 +1,84 @@
+# tollgated example config. Run:
+#   TOLLGATE_KEY_TEAM_A=... TOLLGATE_KEY_TEAM_B=... \
+#     go -C cmd/tollgated run . serve -config ../../configs/tollgated.example.yaml
+# Validate without serving:
+#   tollgated config check -config tollgated.example.yaml [-json]
+#
+# Unknown keys and bad values fail at startup, and every problem is listed at
+# once. Flags (-listen, -admin-listen, -shutdown-timeout) override this file.
+# Durations are strings such as "250ms", "30s", "5m".
+#
+# ${VAR} reads an environment variable; ${VAR:-fallback} uses the fallback
+# when it is unset or empty. An unset variable with no fallback is an error.
+# Use ${VAR} for every secret: the startup log prints tenant ids and key
+# COUNTS only, never a key.
+
+# Address of the proxy listener.
+listen: :8080
+
+# Optional private listener for /statusz and /metrics. Never expose it to
+# clients. Omit to disable.
+admin_listen: 127.0.0.1:9090
+
+# How long in-flight calls (streams included) may finish after SIGTERM before
+# they are cut. Metrics are flushed after the drain.
+shutdown_timeout: 30s
+
+# Static-key authentication (ext/auth/statickeys): tenant id -> its keys.
+# Several keys per tenant allow rotation. Clients send the key in `header`
+# (default x-proxy-key); it is stripped before forwarding. Omit the section to
+# run without authentication (single anonymous tenant).
+auth:
+  kind: static-keys
+  header: x-proxy-key
+  keys:
+    team-a: ["${TOLLGATE_KEY_TEAM_A}"]
+    team-b: ["${TOLLGATE_KEY_TEAM_B}"]
+
+# Providers: the first path segment picks the upstream, e.g. POST
+# /openai/v1/chat/completions goes to the openai upstream. When this section is
+# present it is the whole table; omit it to use the built-in openai, anthropic
+# and openrouter. `wire` is openai.chat, anthropic.messages or passthrough; the
+# default follows the name. Upstream credentials are never configured here:
+# clients send their own Authorization / x-api-key and tollgate forwards it.
+providers:
+  openai:
+    upstream: ${OPENAI_UPSTREAM:-https://api.openai.com}
+    wire: openai.chat
+  anthropic:
+    upstream: ${ANTHROPIC_UPSTREAM:-https://api.anthropic.com}
+    wire: anthropic.messages
+
+# Sessions: how long a quiet session stays open and how many are kept.
+# `header` renames the optional caller-supplied session id header.
+sessions:
+  ttl: 5m
+  max_sessions: 100000
+
+# Per-tenant in-flight call cap (ext/admission/concurrency). A call over the
+# cap waits up to queue_timeout, then is answered 429 with Retry-After.
+admission:
+  kind: concurrency
+  default_max: 16
+  per_tenant:
+    team-b: 4
+  queue_timeout: 2s
+  retry_after: 1s
+
+# Where per-call metrics go: stdout (one JSON line per call) or none. A
+# Postgres sink needs the separate ext/metrics/postgres module and is not
+# available in this binary.
+metrics:
+  sink: stdout
+
+# Limits bound every call. Keys are the snake_case names of tollgate.Limits
+# fields (durations as strings, the rest integers); omitted keys keep their
+# defaults.
+limits:
+  max_request_body: 16777216
+  connect_timeout: 10s
+  first_byte_timeout: 60s
+  idle_stream_timeout: 120s
+  max_call_duration: 15m
+  metric_queue: 10000
+  metric_flush_interval: 1s

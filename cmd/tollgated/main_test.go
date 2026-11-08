@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -24,6 +25,9 @@ func TestRun_Commands(t *testing.T) {
 		{"help", []string{"help"}, 0, "usage:", ""},
 		{"no args", nil, 2, "", "usage:"},
 		{"unknown", []string{"bogus"}, 2, "", `unknown command "bogus"`},
+		{"config without check", []string{"config"}, 2, "", "usage:"},
+		{"config check without -config", []string{"config", "check"}, 2, "", "usage: tollgated config check"},
+		{"missing config file", []string{"serve", "-config", "/nonexistent/x.yaml"}, 1, "", "invalid config"},
 		{"bad flag", []string{"serve", "-nope"}, 2, "", "flag provided but not defined"},
 		{"bad listen addr", []string{"serve", "-listen", "256.0.0.1:bad"}, 1, "", "listen failed"},
 	}
@@ -51,7 +55,7 @@ func TestRunServe_ShutsDownOnCancel(t *testing.T) {
 	go func() {
 		done <- run(ctx, []string{"serve", "-listen", "127.0.0.1:0", "-shutdown-timeout", "1s"}, io.Discard, &errb)
 	}()
-	waitFor(t, func() bool { return strings.Contains(errb.String(), "tollgated listening") })
+	waitFor(t, func() bool { return listenAddr(&errb, "proxy") != "" })
 	cancel()
 	select {
 	case code := <-done:
@@ -71,7 +75,9 @@ func TestServe_ServesHealthThenDrains(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	h := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	errc := make(chan error, 1)
-	go func() { errc <- serve(ctx, ln, h, time.Second, slog.New(slog.DiscardHandler)) }()
+	go func() {
+		errc <- serve(ctx, []endpoint{{"proxy", ln, h}}, time.Second, slog.New(slog.DiscardHandler))
+	}()
 
 	resp, err := http.Get("http://" + ln.Addr().String() + "/healthz")
 	if err != nil {
@@ -93,7 +99,7 @@ func TestServe_ReturnsListenerError(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = ln.Close() // Serve fails immediately on a closed listener
-	err = serve(context.Background(), ln, http.NotFoundHandler(), time.Second, slog.New(slog.DiscardHandler))
+	err = serve(context.Background(), []endpoint{{"proxy", ln, http.NotFoundHandler()}}, time.Second, slog.New(slog.DiscardHandler))
 	if err == nil {
 		t.Fatal("want error from closed listener")
 	}
@@ -108,4 +114,25 @@ func waitFor(t *testing.T, cond func() bool) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// listenAddr returns the address the named endpoint logged when it started
+// listening, or "" if it has not yet.
+func listenAddr(log *syncBuffer, name string) string {
+	for _, l := range strings.Split(log.String(), "\n") {
+		var rec struct{ Msg, Name, Addr string }
+		if json.Unmarshal([]byte(l), &rec) == nil && rec.Msg == "tollgated listening" && rec.Name == name {
+			return rec.Addr
+		}
+	}
+	return ""
+}
+
+// startRun runs `tollgated args...` in the background and returns its exit
+// code channel and stderr.
+func startRun(ctx context.Context, args []string, stdout io.Writer) (<-chan int, *syncBuffer) {
+	errb := &syncBuffer{}
+	done := make(chan int, 1)
+	go func() { done <- run(ctx, args, stdout, errb) }()
+	return done, errb
 }

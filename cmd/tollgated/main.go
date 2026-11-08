@@ -3,25 +3,25 @@
 // It stays thin: parse flags, build tollgate.Options, serve, shut down
 // gracefully. Logic belongs in the library or in ext/ (ARCHITECTURE.md).
 //
-//	tollgated serve [-listen :8080] [-shutdown-timeout 30s]
-//	tollgated version
+//	tollgated serve [-config FILE] [-listen ADDR] [-admin-listen ADDR] [-shutdown-timeout D]
+//	tollgated config check -config FILE [-json]
+//	tollgated version [-json]
+//
+// The config file is YAML (configs/tollgated.example.yaml); flags override it.
+// Secrets come from ${VAR} in the file and are never logged. Exit codes: 0 ok,
+// 1 invalid config or runtime failure, 2 usage error.
 package main
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
-	"time"
-
-	"github.com/ethosagent/tollgate"
 )
 
 // version is stamped at build time: -ldflags "-X main.version=v1.2.3".
@@ -42,10 +42,15 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	switch args[0] {
 	case "version":
-		_, _ = fmt.Fprintln(stdout, version)
-		return 0
+		return runVersion(args[1:], stdout, stderr)
 	case "serve":
-		return runServe(ctx, args[1:], stderr)
+		return runServe(ctx, args[1:], stdout, stderr)
+	case "config":
+		if len(args) > 1 && args[1] == "check" {
+			return runConfigCheck(ctx, args[2:], stdout, stderr)
+		}
+		usage(stderr)
+		return 2
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
@@ -57,60 +62,25 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	_, _ = fmt.Fprintln(w, "usage: tollgated serve [-listen :8080] [-shutdown-timeout 30s] | tollgated version")
+	_, _ = fmt.Fprintln(w, "usage: tollgated serve [-config FILE] [-listen ADDR] [-admin-listen ADDR] [-shutdown-timeout D]")
+	_, _ = fmt.Fprintln(w, "       tollgated config check -config FILE [-json]")
+	_, _ = fmt.Fprintln(w, "       tollgated version [-json]")
 }
 
-func runServe(ctx context.Context, args []string, stderr io.Writer) int {
-	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+func runVersion(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("version", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	listen := fs.String("listen", ":8080", "address to listen on")
-	grace := fs.Duration("shutdown-timeout", 30*time.Second, "time to drain in-flight calls on shutdown")
+	asJSON := fs.Bool("json", false, "print {\"version\":...,\"go\":...} on stdout")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	logger := slog.New(slog.NewJSONHandler(stderr, nil))
-	p, err := tollgate.New(tollgate.Options{Logger: logger})
-	if err != nil {
-		logger.Error("invalid options", "err", err)
-		return 1
+	if !*asJSON {
+		_, _ = fmt.Fprintln(stdout, version)
+		return 0
 	}
-	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", *listen)
-	if err != nil {
-		logger.Error("listen failed", "addr", *listen, "err", err)
-		return 1
-	}
-	if err := serve(ctx, ln, p.Handler(), *grace, logger); err != nil {
-		logger.Error("server stopped", "err", err)
-		return 1
-	}
+	_ = json.NewEncoder(stdout).Encode(struct {
+		Version string `json:"version"`
+		Go      string `json:"go"`
+	}{version, runtime.Version()})
 	return 0
-}
-
-// serve runs h on ln until ctx is done, then drains for up to grace.
-func serve(ctx context.Context, ln net.Listener, h http.Handler, grace time.Duration, logger *slog.Logger) error {
-	srv := &http.Server{
-		Handler:           h,
-		ReadHeaderTimeout: 10 * time.Second,
-		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelWarn),
-	}
-	errc := make(chan error, 1)
-	go func() { errc <- srv.Serve(ln) }()
-	logger.Info("tollgated listening", "addr", ln.Addr().String(), "version", version)
-
-	select {
-	case err := <-errc:
-		return err
-	case <-ctx.Done():
-	}
-	logger.Info("shutting down", "grace", grace.String())
-	shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), grace)
-	defer cancel()
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown: %w", err)
-	}
-	if err := <-errc; err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return err
-	}
-	return nil
 }

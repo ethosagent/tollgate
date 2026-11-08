@@ -20,6 +20,14 @@ curl -s localhost:8080/healthz
 curl -s -X POST localhost:8080/openai/v1/chat/completions -d '{}'   # 501 until the pipeline lands
 ```
 
+With a config file (see `configs/tollgated.example.yaml`; secrets via `${VAR}`):
+
+```sh
+export TOLLGATE_KEY_TEAM_A=... TOLLGATE_KEY_TEAM_B=...
+go -C cmd/tollgated run . config check -config ../../configs/tollgated.example.yaml -json
+go -C cmd/tollgated run . serve -config ../../configs/tollgated.example.yaml
+```
+
 ## Debug a red gate
 
 1. `scripts/run-checks.sh` prints the last 40 lines of each failing gate.
