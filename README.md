@@ -127,15 +127,45 @@ dependency are separate Go modules, so you download only what you import.
 
 Every extension call runs under `recover()` and a deadline.
 
-## Test your extension
+## Testing your extension
 
 `testkit.Run` drives your plugin through a real proxy and a fake upstream
 that replays recorded OpenAI and Anthropic responses. It needs no network and
 no keys, and it returns every call your plugin received:
 
 ```go
-rec := testkit.Run(t, myHook{}, "openai/chat-stream-text", "anthropic/messages")
-before := rec.Of(testkit.StageBefore) // what Before saw, per call
+import (
+	"context"
+	"testing"
+
+	"github.com/ethosagent/tollgate"
+	"github.com/ethosagent/tollgate/testkit"
+)
+
+// auditHook is the extension under test: it tags every call in Before.
+type auditHook struct{ tollgate.NoopHook }
+
+func (auditHook) Name() string { return "audit" }
+
+func (auditHook) Before(_ context.Context, c *tollgate.Call) (*tollgate.Response, error) {
+	c.Meta = map[string]any{"audited": true}
+	return nil, nil
+}
+
+func TestAuditHook(t *testing.T) {
+	rec := testkit.Run(t, auditHook{}, "openai/chat-stream-text", "anthropic/messages")
+
+	before := rec.Of(testkit.StageBefore) // what Before was given, per call
+	if len(before) != 2 || before[1].Call.Model != "claude-sonnet-4-5" {
+		t.Fatalf("Before saw %d calls: %+v", len(before), before)
+	}
+	if n := len(rec.Of(testkit.StageAfter)); n != 0 { // only the stages it implements
+		t.Fatalf("After ran %d times; auditHook only implements Before", n)
+	}
+	if rec.Replies[0].Status != 200 { // what the client got
+		t.Fatalf("client status = %d", rec.Replies[0].Status)
+	}
+}
 ```
 
 `testkit.RunWith` adds several plugins, headers and upstream faults (latency,
