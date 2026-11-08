@@ -23,5 +23,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0015](0015-inline-safe-extensions-run-without-a-deadline-goroutine.md) | InlineSafe extensions run without a deadline goroutine | Accepted |
 | [0016](0016-thin-root-package-implementation-in-internal-core.md) | Thin root package; the implementation lives in `internal/core` | Accepted |
 | [0017](0017-go-work-for-nested-modules-no-replace-in-releases.md) | A committed go.work builds nested modules; releases carry no replace | Accepted |
+| [0018](0018-openai-responses-wire.md) | OpenAI Responses wire, chosen per request from the path | Proposed |
 
 Template: [`template.md`](template.md).

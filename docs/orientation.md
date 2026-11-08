@@ -28,7 +28,7 @@ before the code (archtest rule P1 guarantees it exists).
 2. **Auth** (`Options.Auth`) turns the request into a `Tenant`, or 401/403.
 3. **Admission** (`Options.Admission`) admits it now, queues it, or 429s.
 4. **Resolve** (`internal/resolve`) picks the `Provider` from the path prefix; the rest path
-   is `/v1/chat/completions`.
+   is `/v1/chat/completions`. The wire is then refined from that path (`resolve.WireForRest`).
 5. **Normalise** (`internal/normalise`) reads the capped body once into a `Call`.
 6. **Session** (`internal/session`) attributes the call to a `Session` (header or predicted).
 7. **Hook.Before** chain (`internal/chain`) may mutate the call or short-circuit it.
@@ -49,3 +49,15 @@ A `stream:false` call replaces 9–10 with a capped buffer and `Hook.OnResponse`
 | Add an extension, provider or option | `.agents/skills/` |
 | Review a change | `.agents/reviews/` (the PR's tier picks the lenses) |
 | Fix a red gate | `.logs/<gate>.log`, then `docs/runbooks/local-dev.md` |
+
+## Wire formats
+
+| Wire | Upstream path | Provider prefixes | Finish reason |
+|---|---|---|---|
+| `openai.chat` | `/v1/chat/completions` | `/openai`, `/openrouter` | `stop`, `tool_calls`, ... |
+| `openai.responses` | `/v1/responses` (Codex, OpenCode) | same prefixes; chosen from the path | `completed`, or the `incomplete_details` reason |
+| `anthropic.messages` | `/v1/messages` | `/anthropic` | `end_turn`, `tool_use`, ... |
+
+Anything else is `passthrough`: forwarded untouched, metered by bytes. Custom tool calls
+and built-in tool items on the Responses wire are forwarded but not normalised
+([ADR 0018](decisions/0018-openai-responses-wire.md)).

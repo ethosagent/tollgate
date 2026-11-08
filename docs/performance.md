@@ -182,3 +182,19 @@ Then:
 | `cac4cae` | idle pool default = `MaxConnsPerHost` (was 20) | no connection churn below the cap |
 | `cb2da6d` | relay reads start at 4 KiB, 32 KiB on bulk | ~30 KB less per open stream |
 | `cd4e54b` | frame queue ring grows with the backlog, bounded by frames and bytes | was the top allocation (21.7 MB / 1000 calls) |
+
+## Responses wire parse cost
+
+`go test -run '^$' -bench 'EventMapper/openai|ParseRequest/openai' -benchmem -count 6 ./internal/normalise`
+(medians of 6, M1 Pro, go1.27.1, hand-authored fixtures):
+
+| Benchmark | chat | Responses | Frames / bytes (chat, Responses) |
+|---|---:|---:|---|
+| EventMapper, text stream | 5585 ns | 8298 ns | 6 / 953, 10 / 3746 |
+| EventMapper, tool stream | 7526 ns | 9917 ns | 6 / 1172, 8 / 3269 |
+| ParseRequest, simple | 1724 ns | 934 ns | 185 B, 101 B |
+| ParseRequest, tools | 2263 ns | 7682 ns | 362 B, 897 B (5 items) |
+
+Per frame the mapper costs 830 and 1240 ns against chat's 931 and 1254 (within 10%).
+Per stream it is 1.3 to 1.5 times chat (more frames, three times the bytes).
+

@@ -40,7 +40,7 @@ The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:
 | `internal/model/` | Neutral model (`Tenant`, `Session`, `Call`, `Event`, `Metric`) + extension interfaces + Noop defaults |
 | `internal/forward/` | Upstream target check, transport, header filter, forward + relay, client-first SSE tee |
 | `internal/chain/` | Ordered hook chain, panic guard, deadlines, Finalizer barrier |
-| `internal/normalise/` | Wire format ⇄ neutral model (OpenAI chat, Anthropic messages), provider-shaped errors |
+| `internal/normalise/` | Wire format ⇄ neutral model (OpenAI chat, OpenAI Responses, Anthropic messages), provider-shaped errors |
 | `internal/resolve/` | Default `ProviderResolver` (path prefix → provider) |
 | `internal/session/` | Default `SessionStrategy` (header-or-predict, TTL sweeper) |
 | `internal/metrics/` | Bounded metric queue + batcher + drop counter |

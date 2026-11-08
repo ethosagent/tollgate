@@ -17,8 +17,9 @@ Use it as a **Go library** inside your own service, or run the
 - **Streams first.** Server-sent events reach the client byte for byte, and
   each chunk is flushed at once. Hooks see a copy afterwards, so a slow or
   broken hook cannot stall the stream.
-- **Knows the call.** It reads OpenAI chat and Anthropic messages into one
-  neutral model: model, messages, tool calls, token usage and finish reason.
+- **Knows the call.** It reads OpenAI chat, OpenAI Responses (Codex, OpenCode)
+  and Anthropic messages into one neutral model: model, messages, tool calls,
+  token usage and finish reason.
 - **Records one metric per call**: tenant, session, provider, model, status,
   tokens, time to first byte and duration. Metrics go to stdout, Postgres or
   your own sink, through a bounded queue that never blocks a request.
@@ -131,7 +132,7 @@ Every extension call runs under `recover()` and a deadline.
 ## Testing your extension
 
 `testkit.Run` drives your plugin through a real proxy and a fake upstream
-that replays recorded OpenAI and Anthropic responses. It needs no network and
+that replays recorded OpenAI (chat, Responses) and Anthropic responses. It needs no network and
 no keys, and it returns every call your plugin received:
 
 ```go
