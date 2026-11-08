@@ -15,13 +15,14 @@ gotool() { CGO_ENABLED=0 go tool -modfile="$REPO_ROOT/tools/go.mod" "$@"; }
 # REPO_ROOT is absolute so gotool also works from inside a nested module.
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-# nested_modules lists the repo-relative dirs under ext/ that have their own
-# go.mod (ADR 0011: extensions with third-party deps). Directories named
+# nested_modules lists the repo-relative dirs under ext/ and cmd/ that have
+# their own go.mod (ADR 0011: extensions with third-party deps; ADR 0010: the
+# tollgated binary, which reads YAML). Directories named
 # testdata or starting with "." or "_" are skipped, as the go command skips
 # them; internal/archtest nestedModuleDirs uses the same rule. A failing find
 # fails the caller: it never reads as "no nested modules".
 nested_modules() {
-  (cd "$REPO_ROOT" && find ext \( -type d \( -name testdata -o -name '.?*' -o -name '_*' \) -prune \) -o -name go.mod -print | sed 's|/go.mod$||' | sort)
+  (cd "$REPO_ROOT" && find ext cmd \( -type d \( -name testdata -o -name '.?*' -o -name '_*' \) -prune \) -o -name go.mod -print | sed 's|/go.mod$||' | sort)
 }
 
 # each_module CMD... runs CMD in the root module, then in each nested module,

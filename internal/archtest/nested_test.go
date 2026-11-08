@@ -9,23 +9,27 @@ import (
 	"testing"
 )
 
-// nestedThirdParty is the D7 allowlist for nested modules under ext/ (ADR
-// 0011), keyed by the module's directory. The root module's `go list ./...`
+// nestedThirdParty is the D7 allowlist for nested modules under ext/ and cmd/
+// (ADR 0011, ADR 0010), keyed by the module's directory. The root module's `go list ./...`
 // excludes nested modules, so TestNestedModules lists each one on its own.
 // Adding an entry needs an ADR.
 var nestedThirdParty = map[string][]string{
 	"ext/metrics/postgres": {"github.com/jackc/pgx/v5"},
+	"cmd/tollgated":        {"go.yaml.in/yaml/v3"},
 }
 
-// checkNested applies the ext-layer law to one import of a nested-module
+// checkNested applies the ext/cmd-layer law to one import of a nested-module
 // package: stdlib, the root public API, its own module's packages (rel is
-// under the module path) and allowlisted third-party only. Never internal/.
+// under the module path) and allowlisted third-party only. Never internal/,
+// and testkit only from test files (inTest), as D5 says for ext and cmd.
 //
 // This check is the only enforcement of D5 for nested modules: Go's internal
 // rule is import-path based, and a nested module's path is under the root
 // module's path, so `go build` would accept the import (ADR 0011).
-func checkNested(dir, rel, imp string) string {
+func checkNested(dir, rel, imp string, inTest bool) string {
 	switch {
+	case !inTest && isTestkit(imp):
+		return fmt.Sprintf("D5 %s imports %s: testkit is for tests only; non-test code never imports it", rel, imp)
 	case isInternal(imp):
 		return fmt.Sprintf("D5 %s imports %s: extensions use the public API only: never internal/", rel, imp)
 	case isStd(imp), isRoot(imp), strings.HasPrefix(imp, module+"/"):
@@ -45,8 +49,13 @@ func nestedViolations(dir string, p goPackage) []string {
 	if p.Doc == "" {
 		out = append(out, fmt.Sprintf("P1 %s: package has no doc comment", rel))
 	}
-	for _, imp := range slices.Concat(p.Imports, p.TestImports, p.XTestImports) {
-		if v := checkNested(dir, rel, imp); v != "" {
+	for _, imp := range p.Imports {
+		if v := checkNested(dir, rel, imp, false); v != "" {
+			out = append(out, v)
+		}
+	}
+	for _, imp := range slices.Concat(p.TestImports, p.XTestImports) {
+		if v := checkNested(dir, rel, imp, true); v != "" {
 			out = append(out, v)
 		}
 	}
@@ -57,18 +66,22 @@ func TestCheckNested_Edges(t *testing.T) {
 	const dir = "ext/metrics/postgres"
 	bad := map[string]string{
 		module + "/internal/model":   "D5",
+		module + "/testkit":          "D5",
 		"github.com/lib/pq":          "D7",
 		"golang.org/x/sync/errgroup": "D7",
 	}
 	for imp, rule := range bad {
-		if got := checkNested(dir, dir, imp); !strings.HasPrefix(got, rule+" ") {
+		if got := checkNested(dir, dir, imp, false); !strings.HasPrefix(got, rule+" ") {
 			t.Errorf("checkNested(%s) = %q, want a %s violation", imp, got, rule)
 		}
 	}
-	for _, imp := range []string{"context", module, module + "/testkit", "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/pgxpool"} {
-		if got := checkNested(dir, dir, imp); got != "" {
+	for _, imp := range []string{"context", module, "github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/pgxpool"} {
+		if got := checkNested(dir, dir, imp, false); got != "" {
 			t.Errorf("checkNested(%s) = %q, want allowed", imp, got)
 		}
+	}
+	if got := checkNested(dir, dir, module+"/testkit", true); got != "" {
+		t.Errorf("checkNested(testkit, test file) = %q, want allowed", got)
 	}
 }
 
@@ -82,6 +95,7 @@ func TestNestedViolations_CoverTestImports(t *testing.T) {
 		{"code", goPackage{Imports: []string{module + "/internal/model"}}, "D5 "},
 		{"in-package test", goPackage{TestImports: []string{module + "/internal/chain"}}, "D5 "},
 		{"external test", goPackage{XTestImports: []string{"github.com/lib/pq"}}, "D7 "},
+		{"testkit in code", goPackage{Imports: []string{module + "/testkit"}}, "D5 "},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -114,13 +128,23 @@ func TestNestedModules(t *testing.T) {
 	}
 }
 
-// nestedModuleDirs finds the go.mod files under ext/ with the same rule as
-// scripts/lib.sh nested_modules: directories named testdata or starting with
-// "." or "_" are skipped, as the go command skips them.
+// nestedModuleDirs finds the go.mod files under ext/ and cmd/ with the same
+// rule as scripts/lib.sh nested_modules: directories named testdata or
+// starting with "." or "_" are skipped, as the go command skips them.
 func nestedModuleDirs(t *testing.T, root string) []string {
 	t.Helper()
 	var dirs []string
-	err := filepath.WalkDir(filepath.Join(root, "ext"), func(path string, d fs.DirEntry, err error) error {
+	for _, top := range []string{"ext", "cmd"} {
+		dirs = append(dirs, nestedModuleDirsUnder(t, root, top)...)
+	}
+	slices.Sort(dirs)
+	return dirs
+}
+
+func nestedModuleDirsUnder(t *testing.T, root, top string) []string {
+	t.Helper()
+	var dirs []string
+	err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
 		switch {
 		case err != nil:
 			return err
@@ -134,9 +158,8 @@ func nestedModuleDirs(t *testing.T, root string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("walk ext/: %v", err)
+		t.Fatalf("walk %s/: %v", top, err)
 	}
-	slices.Sort(dirs)
 	return dirs
 }
 

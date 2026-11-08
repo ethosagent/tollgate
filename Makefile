@@ -4,10 +4,10 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.
 .PHONY: build test check fmt lint hooks run clean
 
 build:
-	go build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o bin/tollgated ./cmd/tollgated
+	go -C cmd/tollgated build -trimpath -ldflags "-s -w -X main.version=$(VERSION)" -o ../../bin/tollgated .
 
 test:
-	go test -race ./...
+	scripts/run-checks.sh test
 
 check:
 	scripts/run-checks.sh
@@ -22,7 +22,7 @@ hooks:
 	scripts/install-hooks.sh
 
 run:
-	go run ./cmd/tollgated serve -listen :8080
+	go -C cmd/tollgated run . serve -listen :8080
 
 clean:
 	rm -rf bin .logs

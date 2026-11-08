@@ -24,7 +24,7 @@ scripts/install-hooks.sh          # once: pre-commit (fast) + pre-push (full gat
 scripts/run-checks.sh             # THE gate; CI runs exactly this
 scripts/run-checks.sh --fast       # inner loop: fmt vet arch docs size (seconds)
 scripts/quiet.sh go test -race ./internal/forward  # any command, failures-only output
-go run ./cmd/tollgated serve -listen :8080
+go -C cmd/tollgated run . serve -listen :8080
 ```
 
 The gate prints only failures; full output is in `.logs/<gate>.log`. Gates:

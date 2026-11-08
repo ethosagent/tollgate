@@ -15,6 +15,7 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0007](0007-upstream-target-checked-in-the-core-for-every-resolver.md) | Upstream target checked in the core for every resolver | Accepted |
 | [0008](0008-error-to-status-contract-for-extensions.md) | Error-to-status contract for extensions | Accepted |
 | [0009](0009-extensions-declare-consumed-headers.md) | Extensions declare the request headers they consume | Accepted |
+| [0010](0010-yaml-config-in-the-tollgated-nested-module.md) | YAML config lives in the tollgated nested module | Accepted |
 | [0011](0011-extensions-with-third-party-dependencies-live-in-nested-modules.md) | Extensions with third-party dependencies live in nested modules | Accepted |
 | [0012](0012-session-header-reaches-the-strategy-as-a-call-field.md) | The session header reaches the SessionStrategy as a Call field | Accepted |
 | [0013](0013-finalizers-see-single-choice-streams.md) | Finalizers see single-choice streams only | Accepted |

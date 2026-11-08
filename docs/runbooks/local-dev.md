@@ -15,7 +15,7 @@ with `cd tools && go get -tool <module>@<version> && go mod tidy`.
 ## Run
 
 ```sh
-go run ./cmd/tollgated serve -listen :8080
+go -C cmd/tollgated run . serve -listen :8080
 curl -s localhost:8080/healthz
 curl -s -X POST localhost:8080/openai/v1/chat/completions -d '{}'   # 501 until the pipeline lands
 ```

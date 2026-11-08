@@ -26,7 +26,7 @@ log.Fatal(http.ListenAndServe(":8080", p.Handler()))
 ## Run it
 
 ```sh
-go run ./cmd/tollgated serve -listen :8080
+go -C cmd/tollgated run . serve -listen :8080
 curl -s localhost:8080/healthz          # {"status":"ok"}
 ```
 
