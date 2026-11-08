@@ -1,6 +1,10 @@
 package normalise
 
-import "github.com/ethosagent/tollgate/internal/model"
+import (
+	"encoding/json"
+
+	"github.com/ethosagent/tollgate/internal/model"
+)
 
 // orInput is a Responses "input": a bare string (one user message) or an
 // array of items.
@@ -8,7 +12,7 @@ type orInput []orItem
 
 func (in *orInput) UnmarshalJSON(b []byte) error {
 	items, err := decodeContent(b, func(s string) orItem {
-		return orItem{Type: "message", Role: "user", Content: oaContent{{Type: "input_text", Text: s}}}
+		return orItem{Type: "message", Role: "user", Content: quoteJSON(s)}
 	})
 	if err != nil {
 		return err
@@ -17,18 +21,24 @@ func (in *orInput) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// orItem is one input item. Fields not listed (images, ids, status,
-// annotations) are ignored. Item types the neutral model has no place for
-// (item_reference, web_search_call, computer_call, ...) are skipped.
+// orItem is one input item. The fields whose JSON type differs between item
+// types (content, arguments, output, summary, action, input) stay raw and are
+// decoded only by the branch of the item types that use them, so an item the
+// builder does not model can never fail the parse: tool_search_call.arguments
+// and computer_call_output.output are objects, for example. Item types with no
+// place in the neutral model (item_reference, web_search_call, ...) are skipped.
 type orItem struct {
-	Type      string    `json:"type"`
-	Role      string    `json:"role"`
-	Content   oaContent `json:"content"`
-	CallID    string    `json:"call_id"`
-	Name      string    `json:"name"`
-	Arguments string    `json:"arguments"`
-	Output    oaContent `json:"output"`
-	Summary   []oaPart  `json:"summary"`
+	Type      string          `json:"type"`
+	ID        string          `json:"id"`
+	Role      string          `json:"role"`
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name"`
+	Content   json.RawMessage `json:"content"`
+	Arguments json.RawMessage `json:"arguments"`
+	Output    json.RawMessage `json:"output"`
+	Summary   json.RawMessage `json:"summary"`
+	Input     json.RawMessage `json:"input"`
+	Action    json.RawMessage `json:"action"`
 }
 
 type orRequest struct {
@@ -61,7 +71,9 @@ func (w responsesWire) ParseRequest(body []byte, c *model.Call) error {
 		b.msgs = append(b.msgs, model.Message{Role: model.RoleSystem, Text: r.Instructions})
 	}
 	for i := range r.Input {
-		b.add(&r.Input[i])
+		if err := b.add(&r.Input[i]); err != nil {
+			return wrapRequestErr("openai responses request", err)
+		}
 	}
 	c.Messages = b.finish()
 	setMeta(c, model.MetaPreviousResponseID, r.PreviousResponseID)
@@ -91,24 +103,103 @@ type orBuilder struct {
 	openAsst bool
 }
 
-func (b *orBuilder) add(it *orItem) {
+func (b *orBuilder) add(it *orItem) error {
 	switch it.Type {
 	case "reasoning":
-		for _, p := range it.Summary {
+		var parts []oaPart
+		if err := decodeRaw(it.Summary, &parts); err != nil {
+			return err
+		}
+		for _, p := range parts {
 			b.reasoning += p.Text
 		}
 	case "function_call":
-		a := b.assistant()
-		a.ToolCalls = append(a.ToolCalls, model.ToolCall{
-			ID: it.CallID, Name: it.Name, Arguments: rawArguments(it.Arguments)})
-	case "function_call_output":
-		b.push(model.Message{Role: model.RoleTool, Text: it.Output.text(), ToolCallID: it.CallID}, false)
-	case "message", "":
-		if it.Role != "" { // an item without a role or type is not a message
-			role := openAIRole(it.Role)
-			b.push(model.Message{Role: role, Text: it.Content.text()}, role == model.RoleAssistant)
+		b.toolCall(it.CallID, it.Name, argumentsOf(it.Arguments))
+	case "custom_tool_call":
+		b.toolCall(it.CallID, it.Name, customInput(it.Input))
+	case "local_shell_call":
+		b.toolCall(it.CallID, localShellName, actionOf(it.Action))
+	case "function_call_output", "custom_tool_call_output", "local_shell_call_output":
+		text, err := textOf(it.Output)
+		if err != nil {
+			return err
 		}
+		id := it.CallID
+		if id == "" {
+			id = it.ID
+		}
+		b.push(model.Message{Role: model.RoleTool, Text: text, ToolCallID: id}, false)
+	case "message", "":
+		if it.Role == "" { // an item without a role or type is not a message
+			return nil
+		}
+		text, err := textOf(it.Content)
+		if err != nil {
+			return err
+		}
+		role := openAIRole(it.Role)
+		b.push(model.Message{Role: role, Text: text}, role == model.RoleAssistant)
 	}
+	return nil
+}
+
+// localShellName is the tool name given to local_shell_call items, which
+// carry an action and no name.
+const localShellName = "local_shell"
+
+func (b *orBuilder) toolCall(id, name string, args json.RawMessage) {
+	a := b.assistant()
+	a.ToolCalls = append(a.ToolCalls, model.ToolCall{ID: id, Name: name, Arguments: args})
+}
+
+// decodeRaw decodes raw into v; an absent or null field leaves v alone.
+func decodeRaw(raw json.RawMessage, v any) error {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return json.Unmarshal(raw, v)
+}
+
+// textOf reads a content or output field: a string, an array of typed parts
+// or null.
+func textOf(raw json.RawMessage) (string, error) {
+	var c oaContent
+	if err := decodeRaw(raw, &c); err != nil {
+		return "", err
+	}
+	return c.text(), nil
+}
+
+// argumentsOf returns function_call arguments (a JSON text in a string).
+func argumentsOf(raw json.RawMessage) json.RawMessage {
+	var s string
+	if json.Unmarshal(raw, &s) != nil {
+		return nil
+	}
+	return rawArguments(s)
+}
+
+// customInput returns a custom tool's freeform input as a JSON string, so
+// the arguments stay valid JSON whatever the text is (a patch, for example).
+func customInput(raw json.RawMessage) json.RawMessage {
+	var s string
+	if json.Unmarshal(raw, &s) != nil || s == "" {
+		return nil
+	}
+	return quoteJSON(s)
+}
+
+func quoteJSON(s string) json.RawMessage {
+	b, _ := json.Marshal(s) // a string always marshals
+	return b
+}
+
+// actionOf returns a local_shell_call's action object as the arguments.
+func actionOf(raw json.RawMessage) json.RawMessage {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	return raw
 }
 
 // push appends a message; a pending reasoning summary joins an assistant one.

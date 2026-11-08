@@ -1,0 +1,4 @@
+{"kind":"text","text":"Hel"}
+{"kind":"error","err":"The model failed to generate a response."}
+{"kind":"finish","finish":"failed"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":1,"CachedInputTokens":0,"ReasoningTokens":0}}

@@ -122,3 +122,40 @@ func TestResponses_WireChosenForEveryResolver(t *testing.T) {
 		})
 	}
 }
+
+// TestResponses_UnmodelledItemsKeepHooksAndMetering: a request carrying item
+// types the normaliser does not model (tool_search_call with object
+// arguments, computer_call_output with an object output) still runs Before,
+// sets the model and meters usage.
+func TestResponses_UnmodelledItemsKeepHooksAndMetering(t *testing.T) {
+	const body = `{"model":"gpt-5-codex","stream":true,"input":[{"role":"user","content":"hi"},` +
+		`{"type":"tool_search_call","call_id":"call_fixture1","arguments":{"query":"weather"}},` +
+		`{"type":"computer_call_output","call_id":"call_fixture2","output":{"type":"computer_screenshot","image_url":"x"}}]}`
+	up := newFakeUpstream(t, upstreamOptions{})
+	type seen struct {
+		model    string
+		stream   bool
+		messages int
+	}
+	before := make(chan seen, 1)
+	done := make(chan model.Metric, 1)
+	h := &tHook{name: "obs",
+		before: func(_ context.Context, c *model.Call) (*model.Response, error) {
+			before <- seen{c.Model, c.Stream, len(c.Messages)}
+			return nil, nil
+		},
+		after: func(_ context.Context, _ *model.Call, m model.Metric) { done <- m }}
+	base, _ := newHookedProxy(t, core.Options{}, h)
+	readAll(t, post(t, base, responsesPath, []byte(body), via(up, fixtureHeader, "openai/responses-stream-tools")))
+	select {
+	case s := <-before:
+		if s != (seen{"gpt-5-codex", true, 1}) {
+			t.Fatalf("Before saw %+v", s)
+		}
+	default:
+		t.Fatal("Before did not run")
+	}
+	if m := <-done; m.Model != "gpt-5-codex" || !m.Stream || m.Usage.InputTokens != 40 || m.Usage.OutputTokens != 11 {
+		t.Fatalf("metric = %+v", m)
+	}
+}

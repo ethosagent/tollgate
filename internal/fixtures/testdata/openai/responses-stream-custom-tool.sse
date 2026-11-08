@@ -1,0 +1,24 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_fixture007","object":"response","created_at":1762500000,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a coding agent.","max_output_tokens":null,"model":"gpt-5-codex","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"tool_choice":"auto","tools":[],"usage":null,"metadata":{}},"sequence_number":0}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_fixture007","object":"response","created_at":1762500000,"status":"in_progress","background":false,"error":null,"incomplete_details":null,"instructions":"You are a coding agent.","max_output_tokens":null,"model":"gpt-5-codex","output":[],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"tool_choice":"auto","tools":[],"usage":null,"metadata":{}},"sequence_number":1}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"ctc_fixture007","type":"custom_tool_call","status":"in_progress","call_id":"call_fixture007","name":"apply_patch","input":""},"sequence_number":2}
+
+event: response.custom_tool_call_input.delta
+data: {"type":"response.custom_tool_call_input.delta","item_id":"ctc_fixture007","output_index":0,"delta":"*** Begin Patch\n*** ","sequence_number":3}
+
+event: response.custom_tool_call_input.delta
+data: {"type":"response.custom_tool_call_input.delta","item_id":"ctc_fixture007","output_index":0,"delta":"Add File: hello.txt\n+hi\n*** End Patch","sequence_number":4}
+
+event: response.custom_tool_call_input.done
+data: {"type":"response.custom_tool_call_input.done","item_id":"ctc_fixture007","output_index":0,"input":"*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch","sequence_number":5}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"ctc_fixture007","type":"custom_tool_call","status":"completed","call_id":"call_fixture007","name":"apply_patch","input":"*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch"},"sequence_number":6}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_fixture007","object":"response","created_at":1762500000,"status":"completed","background":false,"error":null,"incomplete_details":null,"instructions":"You are a coding agent.","max_output_tokens":null,"model":"gpt-5-codex","output":[{"id":"ctc_fixture007","type":"custom_tool_call","status":"completed","call_id":"call_fixture007","name":"apply_patch","input":"*** Begin Patch\n*** Add File: hello.txt\n+hi\n*** End Patch"}],"parallel_tool_calls":true,"previous_response_id":null,"reasoning":{"effort":null,"summary":null},"store":true,"tool_choice":"auto","tools":[],"usage":{"input_tokens":55,"input_tokens_details":{"cached_tokens":0},"output_tokens":30,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":85},"metadata":{}},"sequence_number":7}
+

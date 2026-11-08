@@ -237,7 +237,7 @@ func TestFixtures_HaveNoRealKeysOrIDs(t *testing.T) {
 	keyRe := regexp.MustCompile(`sk-[A-Za-z0-9_-]{16,}|sk-ant-`)
 	idRe := regexp.MustCompile(`(chatcmpl-|msg_|toolu_|call_|resp_)[A-Za-z0-9]+`)
 	// Field names of the Responses API that merely start like an id.
-	fieldNames := map[string]bool{"call_id": true, "call_arguments": true, "call_output": true}
+	fieldNames := map[string]bool{"call_id": true, "call_arguments": true, "call_output": true, "call_input": true}
 	names := FixtureNames()
 	if len(names) < 18 {
 		t.Fatalf("found %d fixtures, want at least 18", len(names))

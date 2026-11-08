@@ -50,6 +50,7 @@ func TestParseRequest_Fixtures(t *testing.T) {
 	covered := map[string]bool{
 		"openai/request-responses-stream": true, // TestParseRequest_ResponsesFixtures
 		"openai/request-responses-tools":  true,
+		"openai/request-responses-custom": true,
 	}
 	for _, tc := range tests {
 		covered[tc.fixture] = true

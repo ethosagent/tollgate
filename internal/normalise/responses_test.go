@@ -27,6 +27,15 @@ func TestParseRequest_ResponsesFixtures(t *testing.T) {
 			{Role: model.RoleUser, Text: "And in Rome?"}},
 			map[string]any{model.MetaPreviousResponseID: "resp_fixture000",
 				model.MetaReasoningEffort: "medium", model.MetaReasoningSummary: "auto"}},
+		{"openai/request-responses-custom", "gpt-5-codex", []model.Message{sys,
+			{Role: model.RoleUser, Text: "Create hello.txt"},
+			{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+				{ID: "call_fixture008", Name: "apply_patch", Arguments: []byte(customPatchJSON)}}},
+			{Role: model.RoleTool, Text: "Success", ToolCallID: "call_fixture008"},
+			{Role: model.RoleAssistant, ToolCalls: []model.ToolCall{
+				{ID: "call_fixture009", Name: "local_shell", Arguments: []byte(`{"type":"exec","command":["ls","-la"],"env":{}}`)}}},
+			{Role: model.RoleTool, Text: `{"output":"hello.txt"}`, ToolCallID: "call_fixture009"},
+			{Role: model.RoleUser, Text: "Now list the files."}}, map[string]any{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.fixture, func(t *testing.T) {
@@ -180,7 +189,7 @@ func TestMapBody_ResponsesStatuses(t *testing.T) {
 	}{
 		{"incomplete", `{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"output":[]}`, "max_output_tokens", ""},
 		{"incomplete no reason", `{"status":"incomplete","output":[]}`, "incomplete", ""},
-		{"failed", `{"status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}`, "", "boom"},
+		{"failed", `{"status":"failed","error":{"code":"server_error","message":"boom"},"output":[]}`, "failed", "boom"},
 		{"error object", `{"error":{"message":"bad key"}}`, "", "bad key"},
 		{"in progress", `{"status":"in_progress","output":[]}`, "", ""},
 	}
@@ -219,9 +228,12 @@ func TestMapFrame_ResponsesTerminalFrames(t *testing.T) {
 			`"incomplete_details":{"reason":"content_filter"},"usage":{"input_tokens":5,"output_tokens":7}}}`,
 			"content_filter", "", model.Usage{InputTokens: 5, OutputTokens: 7}},
 		{"failed", "response.failed", `{"type":"response.failed","response":{"status":"failed",` +
-			`"error":{"code":"rate_limit_exceeded","message":"slow down"}}}`, "", "slow down", model.Usage{}},
+			`"error":{"code":"rate_limit_exceeded","message":"slow down"}}}`, "failed", "slow down", model.Usage{}},
 		{"failed without message", "response.failed", `{"type":"response.failed","response":{"error":{"code":"server_error"}}}`,
-			"", "server_error", model.Usage{}},
+			"failed", "server_error", model.Usage{}},
+		{"failed with a numeric code keeps its usage", "response.failed", `{"type":"response.failed","response":{"status":"failed",` +
+			`"error":{"code":502},"usage":{"input_tokens":4,"output_tokens":1}}}`, "failed", "502", model.Usage{InputTokens: 4, OutputTokens: 1}},
+		{"error event with a numeric code", "error", `{"type":"error","code":429}`, "", "429", model.Usage{}},
 		{"error event", "error", `{"type":"error","code":"server_error","message":"oops"}`, "", "oops", model.Usage{}},
 		{"nameless frame uses the JSON type", "", `{"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":2,` +
 			`"input_tokens_details":{"cached_tokens":1}}}}`, "completed", "", model.Usage{InputTokens: 1, OutputTokens: 2, CachedInputTokens: 1}},

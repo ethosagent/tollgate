@@ -1,0 +1,3 @@
+{"kind":"text","text":"Hel"}
+{"kind":"finish","finish":"max_output_tokens"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":16,"CachedInputTokens":0,"ReasoningTokens":0}}

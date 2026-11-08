@@ -1,6 +1,11 @@
 package normalise
 
-import "github.com/ethosagent/tollgate/internal/model"
+import (
+	"encoding/json"
+	"strings"
+
+	"github.com/ethosagent/tollgate/internal/model"
+)
 
 // responsesWire normalises OpenAI Responses API traffic (POST /v1/responses),
 // streamed and buffered.
@@ -32,8 +37,8 @@ func (u *orUsage) toModel() model.Usage {
 type orResponse struct {
 	Status string `json:"status"`
 	Error  *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
+		Code    json.RawMessage `json:"code"` // a string, or a number from some gateways
+		Message string          `json:"message"`
 	} `json:"error"`
 	IncompleteDetails *struct {
 		Reason string `json:"reason"`
@@ -50,7 +55,9 @@ func (r *orResponse) closing(out []model.Event, fallback string) []model.Event {
 		status = fallback
 	}
 	switch {
-	case status == "failed" || (status == "" && r.Error != nil):
+	case status == "failed":
+		out = append(out, errorEvent(r.errorMessage()), finishEv("failed"))
+	case status == "" && r.Error != nil:
 		out = append(out, errorEvent(r.errorMessage()))
 	case status == "incomplete":
 		reason := "incomplete"
@@ -73,8 +80,9 @@ func (r *orResponse) errorMessage() string {
 		return "response failed"
 	case r.Error.Message != "":
 		return r.Error.Message
-	case r.Error.Code != "":
-		return r.Error.Code
+	}
+	if code := codeString(r.Error.Code); code != "" {
+		return code
 	}
 	return "response failed"
 }
@@ -86,14 +94,16 @@ type orEvent struct {
 	OutputIndex int    `json:"output_index"`
 	Delta       string `json:"delta"`
 	Item        struct {
-		Type   string `json:"type"`
-		CallID string `json:"call_id"`
-		Name   string `json:"name"`
+		Type   string          `json:"type"`
+		CallID string          `json:"call_id"`
+		Name   string          `json:"name"`
+		Input  json.RawMessage `json:"input"`  // custom_tool_call
+		Action json.RawMessage `json:"action"` // local_shell_call
 	} `json:"item"`
 	Response orResponse `json:"response"`
 	// Message and Code belong to the stream "error" event.
-	Message string `json:"message"`
-	Code    string `json:"code"`
+	Message string          `json:"message"`
+	Code    json.RawMessage `json:"code"`
 }
 
 // NewEventMapper returns a mapper that tracks tool-call numbering.
@@ -106,14 +116,15 @@ type responsesMapper struct {
 }
 
 // skipsResponsesEvent names the events that carry nothing the neutral model
-// keeps: lifecycle, part and item boundaries, and the ".done" repeats of text
-// already streamed. With an SSE event name they are dropped undecoded. The
+// keeps: lifecycle, part boundaries, and the ".done" repeats of text already
+// streamed. (output_item.done is not skipped: it completes custom and shell
+// tool calls, whose input does not stream as JSON.) With an SSE event name they are dropped undecoded. The
 // terminal events are not here: they carry the usage.
 func skipsResponsesEvent(event string) bool {
 	switch event {
 	case "response.created", "response.in_progress", "response.queued",
 		"response.content_part.added", "response.content_part.done",
-		"response.output_item.done", "response.output_text.done",
+		"response.output_text.done",
 		"response.function_call_arguments.done", "response.reasoning_summary_part.added",
 		"response.reasoning_summary_part.done", "response.reasoning_summary_text.done",
 		"response.reasoning_text.done", "response.output_text.annotation.added":
@@ -151,6 +162,8 @@ func (m *responsesMapper) dispatch() []model.Event {
 		if e.Item.Type == "function_call" {
 			return []model.Event{toolEv(m.tools.assign(e.OutputIndex), e.Item.CallID, e.Item.Name, "")}
 		}
+	case "response.output_item.done":
+		return m.itemDone()
 	case "response.function_call_arguments.delta":
 		return []model.Event{toolEv(m.tools.assign(e.OutputIndex), "", "", e.Delta)}
 	case "response.completed":
@@ -165,12 +178,31 @@ func (m *responsesMapper) dispatch() []model.Event {
 	return nil
 }
 
+// itemDone maps a finished custom or shell tool call to one complete tool
+// event. Their input is freeform text or an action object, not streamed JSON
+// arguments, so it is taken whole from the item.
+func (m *responsesMapper) itemDone() []model.Event {
+	it := &m.ev.Item
+	var args json.RawMessage
+	name := it.Name
+	switch it.Type {
+	case "custom_tool_call":
+		args = customInput(it.Input)
+	case "local_shell_call":
+		name, args = localShellName, actionOf(it.Action)
+	default:
+		return nil
+	}
+	return []model.Event{toolEv(m.tools.assign(m.ev.OutputIndex), it.CallID, name, string(args))}
+}
+
 func (m *responsesMapper) errorMessage() string {
 	switch {
 	case m.ev.Message != "":
 		return m.ev.Message
-	case m.ev.Code != "":
-		return m.ev.Code
+	}
+	if code := codeString(m.ev.Code); code != "" {
+		return code
 	}
 	return "unknown error"
 }
@@ -183,12 +215,14 @@ func (m *responsesMapper) Gap(n int64) { m.state.gap(n) }
 
 // orOutputItem is one item of a complete response's output array.
 type orOutputItem struct {
-	Type      string   `json:"type"`
-	CallID    string   `json:"call_id"`
-	Name      string   `json:"name"`
-	Arguments string   `json:"arguments"`
-	Summary   []oaPart `json:"summary"`
-	Content   []oaPart `json:"content"`
+	Type      string          `json:"type"`
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name"`
+	Arguments json.RawMessage `json:"arguments"`
+	Input     json.RawMessage `json:"input"`
+	Action    json.RawMessage `json:"action"`
+	Summary   json.RawMessage `json:"summary"`
+	Content   json.RawMessage `json:"content"`
 }
 
 type orBody struct {
@@ -216,24 +250,44 @@ func (w responsesWire) MapBody(body []byte) ([]model.Event, error) {
 func (it *orOutputItem) appendEvents(out []model.Event, tools *toolOrdinals, pos int) []model.Event {
 	switch it.Type {
 	case "reasoning":
-		for _, p := range it.Summary {
-			if p.Text != "" {
-				out = append(out, reasoningEv(p.Text))
-			}
-		}
-		for _, p := range it.Content { // raw reasoning text, open-weight models
-			if p.Type == "reasoning_text" && p.Text != "" {
-				out = append(out, reasoningEv(p.Text))
-			}
-		}
+		out = appendParts(out, it.Summary, "", reasoningEv)
+		out = appendParts(out, it.Content, "reasoning_text", reasoningEv) // raw reasoning, open-weight models
 	case "message":
-		for _, p := range it.Content {
-			if p.Type == "output_text" && p.Text != "" {
-				out = append(out, textEv(p.Text))
-			}
-		}
+		out = appendParts(out, it.Content, "output_text", textEv)
 	case "function_call":
-		out = append(out, toolEv(tools.assign(pos), it.CallID, it.Name, it.Arguments))
+		out = append(out, toolEv(tools.assign(pos), it.CallID, it.Name, string(argumentsOf(it.Arguments))))
+	case "custom_tool_call":
+		out = append(out, toolEv(tools.assign(pos), it.CallID, it.Name, string(customInput(it.Input))))
+	case "local_shell_call":
+		out = append(out, toolEv(tools.assign(pos), it.CallID, localShellName, string(actionOf(it.Action))))
 	}
 	return out
+}
+
+// appendParts emits one event per non-empty text part of the given type ("" =
+// any). A field of an unexpected shape yields nothing: only the item types
+// above are read, and a body is never rejected for what it does not model.
+func appendParts(out []model.Event, raw json.RawMessage, typ string, ev func(string) model.Event) []model.Event {
+	var parts []oaPart
+	if decodeRaw(raw, &parts) != nil {
+		return out
+	}
+	for _, p := range parts {
+		if p.Text != "" && (typ == "" || p.Type == typ) {
+			out = append(out, ev(p.Text))
+		}
+	}
+	return out
+}
+
+// codeString renders an error code that is a JSON string or number.
+func codeString(raw json.RawMessage) string {
+	var s string
+	if json.Unmarshal(raw, &s) == nil {
+		return s
+	}
+	if t := strings.TrimSpace(string(raw)); t != "null" {
+		return t
+	}
+	return ""
 }
