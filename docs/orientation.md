@@ -58,6 +58,6 @@ A `stream:false` call replaces 9–10 with a capped buffer and `Hook.OnResponse`
 | `openai.responses` | `/v1/responses` (Codex, OpenCode) | same prefixes; chosen from the path | `completed`, or the `incomplete_details` reason |
 | `anthropic.messages` | `/v1/messages` | `/anthropic` | `end_turn`, `tool_use`, ... |
 
-Anything else is `passthrough`: forwarded untouched, metered by bytes. Custom tool calls
-and built-in tool items on the Responses wire are forwarded but not normalised
+Anything else is `passthrough`: forwarded untouched, metered by bytes. Built-in tool items
+(web search, computer use, MCP) on the Responses wire are forwarded but not normalised
 ([ADR 0018](decisions/0018-openai-responses-wire.md)).

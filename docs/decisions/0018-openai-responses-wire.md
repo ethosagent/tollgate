@@ -31,7 +31,10 @@ overridden.
 
 The wire maps `response.output_text.delta` to text, `response.reasoning_*.delta`
 to reasoning, `function_call` items and `response.function_call_arguments.delta`
-to tool calls (numbered by `output_index`), and the terminal
+to tool calls (numbered by `output_index`), `custom_tool_call` (Codex
+apply_patch) and `local_shell_call` items to tool calls too (arguments are the
+freeform input as a JSON string, or the shell action object, taken from
+`response.output_item.done`; their outputs become `RoleTool` messages), and the terminal
 `response.completed|incomplete|failed` to finish reason and usage. The finish
 reason is provider-native: `completed`, or `incomplete_details.reason`. It is
 not rewritten to chat's `stop`/`tool_calls`. `previous_response_id` and
@@ -45,9 +48,12 @@ second `response.created`/`in_progress` and shifts `output_index`.
   `model.go`, `TestAliases_CoverModel`). No interface changes.
 - Hosts that branch on finish reasons must know Responses reports `completed`
   even when the turn ends in a tool call; read `StreamSummary.ToolCalls`.
-- Not mapped: custom/freeform tool calls (`custom_tool_call`), built-in tool
-  items (web search, computer use), refusals, and image/audio parts. They pass
-  through byte for byte and are simply not normalised.
+- Not mapped: built-in tool items (web search, computer use, tool search, MCP),
+  refusals, and image/audio parts. They pass through byte for byte. Request and
+  output item fields whose JSON type varies by item type are decoded only for the
+  item types that use them, so an unmodelled item never fails the parse.
+- `response.failed` reports finish reason `failed` as well as an error event;
+  error codes may be strings or numbers. `/v1/responses/compact` is not normalised.
 - `sequence_number` is not rewritten when a recovery is spliced.
 - Enforced by `TestWireForRest`, `TestResponses_WireChosenForEveryResolver`,
   the golden fixtures `openai/responses*`, and

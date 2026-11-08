@@ -23,18 +23,23 @@ All notable changes to tollgate. The format follows
   and requests `openai/request-responses-{stream,tools}`; `testkit.Run` drives
   hooks and Finalizers through them.
 
+- Custom tool calls (Codex apply_patch) and local shell calls are normalised
+  into tool calls and `RoleTool` messages, in requests and streams.
+
 ### Changed
 
 - A Finalizer on a Responses stream sees the terminal region at
   `response.completed|incomplete|failed`, and a recovery stream is spliced by
   dropping its `response.created`/`in_progress` and shifting `output_index`.
 - Responses finish reasons are provider-native (`completed`, or the
-  `incomplete_details` reason such as `max_output_tokens`), not chat's
+  `incomplete_details` reason such as `max_output_tokens`; `failed` for
+  `response.failed`), not chat's
   `stop` / `tool_calls`. A turn that ends in a tool call reports `completed`;
   read `StreamSummary.ToolCalls`.
 
 ### Known limitations
 
-- Custom (freeform) tool calls, built-in tool items, refusals and non-text
-  parts are forwarded byte for byte but not normalised.
+- Built-in tool items (web search, computer use, tool search, MCP), refusals
+  and non-text parts are forwarded byte for byte but not normalised;
+  `/v1/responses/compact` stays unparsed.
 - `sequence_number` is not rewritten in a spliced recovery stream.
