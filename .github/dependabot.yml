@@ -5,6 +5,22 @@ updates:
     schedule: { interval: weekly, day: monday }
     labels: [dependencies]
     commit-message: { prefix: "chore(deps)" }
+  # Nested modules (ADR 0010, 0011): one grouped PR each, so a driver and its
+  # golang.org/x deps move together.
+  - package-ecosystem: gomod
+    directory: /cmd/tollgated
+    schedule: { interval: weekly, day: monday }
+    groups:
+      tollgated-deps: { patterns: ["*"] }
+    labels: [dependencies]
+    commit-message: { prefix: "chore(deps)" }
+  - package-ecosystem: gomod
+    directory: /ext/metrics/postgres
+    schedule: { interval: weekly, day: monday }
+    groups:
+      postgres-deps: { patterns: ["*"] }
+    labels: [dependencies]
+    commit-message: { prefix: "chore(deps)" }
   - package-ecosystem: gomod
     directory: /tools
     schedule: { interval: weekly, day: monday }
