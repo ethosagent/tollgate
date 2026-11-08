@@ -26,13 +26,22 @@ func errorEvent(msg string) model.Event {
 // toolOrdinals numbers the tool calls of one response densely from 0, in the
 // order each provider key (OpenAI tool_calls index, Anthropic content block
 // index, body position) is first seen. Both wires use it, so
-// model.ToolCallDelta.Index means the same on either.
+// model.ToolCallDelta.Index means the same on either. The table holds at
+// most maxToolCalls keys, so a malformed stream of ever-new indexes cannot
+// grow it without bound.
 type toolOrdinals struct{ keys []int }
+
+// maxToolCalls bounds the distinct tool calls numbered per response. Past it,
+// every new key gets the ordinal maxToolCalls and is not remembered.
+const maxToolCalls = 1024
 
 // assign returns the ordinal for key, allocating the next one on first sight.
 func (t *toolOrdinals) assign(key int) int {
 	if ord, ok := t.lookup(key); ok {
 		return ord
+	}
+	if len(t.keys) >= maxToolCalls {
+		return maxToolCalls
 	}
 	t.keys = append(t.keys, key)
 	return len(t.keys) - 1

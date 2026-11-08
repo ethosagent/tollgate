@@ -158,7 +158,7 @@ func relayResponse(ctx context.Context, w http.ResponseWriter, resp *http.Respon
 	}
 	var sent bool
 	var err error
-	if req.Final != nil && finalizable(resp) {
+	if req.Final != nil && finalizable(resp) && !lengthDeclared(resp.Header) {
 		sent, res.Final, err = relayFinal(ctx, w, resp, src, req, env)
 	} else {
 		// begin stays on the stack: nothing here may let it escape (STR-6).
@@ -191,12 +191,13 @@ func startResponse(w http.ResponseWriter, resp *http.Response) {
 // terminate ends a response that broke after its first byte. An event
 // stream gets a provider-shaped error event (status from
 // normalise.FinishStatus, fixed message) and a clean end; terminate then
-// reports true. Any other body cannot carry an in-band error, so it reports
-// false and the caller aborts the connection. The choice is made once per
+// reports true. Any other body, or one whose head declared its length,
+// cannot carry an in-band error, so it reports false and the caller aborts
+// the connection. The choice is made once per
 // response from its media type: the wire alone cannot tell, because a
 // streaming wire still answers errors and stream:false calls with JSON.
 func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape, f model.Finish) bool {
-	if !isEventStream(h) {
+	if !isEventStream(h) || lengthDeclared(h) {
 		return false
 	}
 	status := normalise.FinishStatus(f)
@@ -204,6 +205,13 @@ func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape,
 	_, _ = writeFlush(w, http.NewResponseController(w), ev) // the client may be gone; the call is ending anyway
 	return true
 }
+
+// lengthDeclared reports whether h declares the body's length. The relayed
+// head then promises the client exactly that many bytes, so nothing may
+// change the body's length: no barrier Replace or recovery splice, and no
+// in-band error event (net/http would cut the excess and the client would
+// read a truncated body).
+func lengthDeclared(h http.Header) bool { return h.Get("Content-Length") != "" }
 
 // isEventStream reports whether h describes an SSE body.
 func isEventStream(h http.Header) bool {

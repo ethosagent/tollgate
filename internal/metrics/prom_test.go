@@ -117,7 +117,7 @@ func testReport() Report {
 		r.Observe(m)
 	}
 	return Report{Snapshot: r.Snapshot(), InFlight: 2, Queue: &Stats{Depth: 5, Dropped: 9, SinkErrors: 4, Written: 100, Ready: false},
-		Hooks:    HookCounts{UnbufferedResponses: 6, DroppedEvents: 8},
+		Hooks:    HookCounts{UnbufferedResponses: 6, DroppedEvents: 8, UnparsedFrames: 11},
 		Sessions: &SessionCounts{Live: 11, Expired: 12, Evicted: 13, Replaced: 14, ClosedDropped: 15}}
 }
 
@@ -144,6 +144,7 @@ func TestWriteProm_ParsesAndCarriesEveryFamily(t *testing.T) {
 		{"tollgate_tokens_total", []string{"kind", "output"}, 3},
 		{"tollgate_hook_skips_total", []string{"reason", "unbuffered_response"}, 6},
 		{"tollgate_hook_skips_total", []string{"reason", "dropped_event"}, 8},
+		{"tollgate_hook_skips_total", []string{"reason", "unparsed_frame"}, 11},
 		{"tollgate_call_duration_seconds_count", nil, 3},
 		{"tollgate_sessions_live", nil, 11},
 		{"tollgate_sessions_closed_total", []string{"reason", "expired"}, 12},

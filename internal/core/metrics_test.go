@@ -3,6 +3,9 @@ package core_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -285,5 +288,29 @@ func TestMetrics_ResponseOverMaxResponseCopyIsCountedNotRead(t *testing.T) {
 	}
 	if n := getStatusz(t, adminServer(t, p)).Hooks.UsageNotRead; n != 1 {
 		t.Fatalf("statusz hooks.usage_not_read = %d, want 1", n)
+	}
+}
+
+// TestMetrics_UnparsableFrameIsCountedNotSilent: a frame the mapper cannot
+// parse still reaches the client byte for byte, and statusz counts it
+// (hooks.unparsed_frames) instead of losing its events silently.
+func TestMetrics_UnparsableFrameIsCountedNotSilent(t *testing.T) {
+	const stream = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\n" +
+		"data: {not json\n\n" +
+		"data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = io.WriteString(w, stream)
+	}))
+	t.Cleanup(up.Close)
+	sink := &collectSink{}
+	p, base := sinkProxy(t, sink, core.Limits{})
+	resp := post(t, base, chatPath, []byte(`{"stream":true}`), map[string]string{"x-upstream-url": up.URL})
+	if body := readAll(t, resp); string(body) != stream {
+		t.Fatalf("client got %q, want the upstream bytes exactly", body)
+	}
+	eventually(t, "the call's metric", func() bool { return len(sink.metrics()) == 1 })
+	if n := getStatusz(t, adminServer(t, p)).Hooks.UnparsedFrames; n != 1 {
+		t.Fatalf("statusz hooks.unparsed_frames = %d, want 1", n)
 	}
 }

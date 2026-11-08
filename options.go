@@ -38,8 +38,10 @@ type Options struct {
 	// and session store per header call, so it is for evaluating the
 	// predictor, not for production. Ignored with a host strategy.
 	MeasureSessionPrediction bool
-	// DisablePrivacyMode turns privacy mode off. Privacy mode (on by default)
-	// keeps transcripts, reasoning, tool payloads and raw bytes out of logs.
+	// DisablePrivacyMode is reserved for turning privacy mode off. Privacy
+	// mode keeps transcripts, reasoning, tool payloads and raw bytes out of
+	// logs. Nothing reads this field yet: tollgate has no code path that logs
+	// those, so privacy mode is always on and setting it has no effect.
 	DisablePrivacyMode bool
 }
 

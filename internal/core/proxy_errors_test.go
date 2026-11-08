@@ -308,3 +308,30 @@ func TestProxy_RejectSendsFixedMessagePerStatus(t *testing.T) {
 		})
 	}
 }
+
+// panickingAdmission grants every call; its release panics.
+type panickingAdmission struct{ released atomic.Int32 }
+
+func (a *panickingAdmission) Acquire(context.Context, model.Tenant, *model.Call) (func(), error) {
+	return func() { a.released.Add(1); panic("release broke") }, nil
+}
+
+// TestProxy_PanickingReleaseDoesNotBreakTheCall: Admission's release is
+// extension code like Acquire, so a panic in it is recovered (non-negotiable
+// 2): the client still reads a complete response, buffered or streamed.
+func TestProxy_PanickingReleaseDoesNotBreakTheCall(t *testing.T) {
+	up := newFakeUpstream(t, upstreamOptions{})
+	adm := &panickingAdmission{}
+	base := newProxyServer(t, core.Options{Admission: adm})
+	for _, body := range []string{`{"stream":false}`, `{"stream":true}`} {
+		resp := post(t, base, chatPath, []byte(body), via(up))
+		got, err := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if err != nil || resp.StatusCode != 200 || len(got) == 0 {
+			t.Fatalf("%s: status %d, %d bytes, read err %v; want a complete 200", body, resp.StatusCode, len(got), err)
+		}
+	}
+	if n := adm.released.Load(); n != 2 {
+		t.Fatalf("released %d times, want 2", n)
+	}
+}

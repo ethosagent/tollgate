@@ -18,14 +18,24 @@ type Tenant struct {
 // Policy is per-tenant data that the host decides and the core and
 // extensions read. It is data, not code.
 type Policy struct {
-	AllowedProviders []string       // empty means all
-	AllowedModels    []string       // empty means all
-	Overrides        map[string]any // body fields forced by policy (e.g. "temperature")
-	Capture          bool           // opt-in request/response capture
+	// AllowedProviders and AllowedModels are carried for extensions to
+	// enforce (empty means all). The core does not check them yet: a Hook or
+	// Admission that should restrict a tenant must compare Call.Provider and
+	// Call.Model itself.
+	AllowedProviders []string
+	AllowedModels    []string
+	// Overrides is reserved for body fields forced by policy (e.g.
+	// "temperature"). The core does not apply it yet; a Hook's Before may.
+	Overrides map[string]any
+	// Capture is reserved for opt-in request/response capture. Nothing
+	// reads it yet: setting it has no effect.
+	Capture bool
 	// AllowedUpstreams lists the hosts (exact, with or without a port) and CIDR
 	// ranges the upstream-override header may target. Empty ignores the header.
 	AllowedUpstreams []string
-	// PrivacyMode overrides the proxy-wide setting for this tenant. nil inherits.
+	// PrivacyMode is reserved for a per-tenant override of privacy mode (nil
+	// inherits). Nothing reads it yet: tollgate never logs bodies, reasoning
+	// or tool payloads for any tenant, so setting it has no effect.
 	PrivacyMode *bool
 }
 

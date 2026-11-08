@@ -14,6 +14,7 @@ import (
 type HookCounts struct {
 	UnbufferedResponses int64 // stream:false responses that bypassed OnResponse
 	DroppedEvents       int64 // SSE frames that never reached OnEvent
+	UnparsedFrames      int64 // SSE frames the mapper could not parse: no events, no usage
 	UsageNotRead        int64 // stream:false responses over Limits.MaxResponseCopy (or encoded): no usage
 	UnheldTerminals     int64 // streams whose terminal region outgrew the hold cap: no Finalizer Decide
 }
@@ -64,6 +65,7 @@ func WriteProm(w io.Writer, r Report) error {
 	p.family("tollgate_hook_skips_total", "counter", "Hook work given up on, by reason.")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UnbufferedResponses), "reason", "unbuffered_response")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.DroppedEvents), "reason", "dropped_event")
+	p.sample("tollgate_hook_skips_total", num(r.Hooks.UnparsedFrames), "reason", "unparsed_frame")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UsageNotRead), "reason", "usage_not_read")
 	p.sample("tollgate_hook_skips_total", num(r.Hooks.UnheldTerminals), "reason", "unheld_terminal")
 	if r.Queue != nil {

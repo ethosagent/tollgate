@@ -28,7 +28,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request) {
 	defer p.finishCall(r.Context(), o)
 	req, release, ok := p.prepare(r, o)
 	if release != nil {
-		defer release() // runs before finishCall: the slot is free before After
+		defer releaseSlot(r.Context(), release) // runs before finishCall: the slot is free before After
 	}
 	if ok {
 		p.serveCall(r, o, req)
@@ -89,9 +89,13 @@ func (p *Proxy) acquire(ctx context.Context, tenant model.Tenant, call *model.Ca
 
 // releaseLate frees a slot an Admission granted after its deadline: the call
 // was already answered 503 and must not hold it.
-func releaseLate(release func(), _ error) {
+func releaseLate(release func(), _ error) { releaseSlot(context.Background(), release) }
+
+// releaseSlot calls an Admission's release under recover: it is extension
+// code, and a panic in it must not break a call that is already answered.
+func releaseSlot(ctx context.Context, release func()) {
 	if release != nil {
-		_, _ = chain.Guard(context.Background(), func(context.Context) (struct{}, error) { release(); return struct{}{}, nil })
+		_, _ = chain.Guard(ctx, func(context.Context) (struct{}, error) { release(); return struct{}{}, nil })
 	}
 }
 

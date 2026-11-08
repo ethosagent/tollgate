@@ -20,9 +20,12 @@ var (
 
 // Tenant is what a key resolves to.
 type Tenant struct {
-	ID               string   // required
-	AllowedProviders []string // empty means all
-	AllowedModels    []string // empty means all
+	ID string // required
+	// AllowedProviders and AllowedModels are copied into the tenant's
+	// Policy (empty means all). The core does not enforce them yet; see
+	// tollgate.Policy.
+	AllowedProviders []string
+	AllowedModels    []string
 	AllowedUpstreams []string // hosts / CIDRs the upstream-override header may target
 }
 

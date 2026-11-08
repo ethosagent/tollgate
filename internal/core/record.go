@@ -61,6 +61,7 @@ func (p *Proxy) settle(ctx context.Context, o *outcome, d time.Duration) {
 	if o.tap != nil {
 		o.tap.Wait(p.opts.Limits.HookChainDeadline)
 		p.stats.droppedFrames.Add(o.tap.Dropped())
+		p.stats.unparsed.Add(o.tap.Unparsed())
 	}
 	m := o.metric(d)
 	o.chn.After(ctx, o.call, m)

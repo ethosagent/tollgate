@@ -57,13 +57,19 @@ func plainHTTP(u *url.URL) bool {
 }
 
 // join appends rest to base's path, preserving the inbound percent-encoding
-// (a%2Fb stays a%2Fb), and carries the inbound query.
+// (a%2Fb stays a%2Fb). The query is base's (e.g. an api-version a provider
+// needs) followed by the inbound one.
 func join(base, in *url.URL, rest string) *url.URL {
 	escRest := escapedSuffix(in.EscapedPath(), rest)
 	u := *base
 	u.RawPath = strings.TrimSuffix(base.EscapedPath(), "/") + escRest
 	u.Path = strings.TrimSuffix(base.Path, "/") + rest
-	u.RawQuery = in.RawQuery
+	switch {
+	case base.RawQuery == "":
+		u.RawQuery = in.RawQuery
+	case in.RawQuery != "":
+		u.RawQuery = base.RawQuery + "&" + in.RawQuery
+	}
 	u.Fragment, u.RawFragment = "", ""
 	return &u
 }

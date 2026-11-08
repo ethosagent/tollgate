@@ -17,6 +17,7 @@ import (
 type hookStats struct {
 	unbuffered    atomic.Int64 // stream:false responses passed without OnResponse
 	droppedFrames atomic.Int64 // SSE frames that never reached the consumer
+	unparsed      atomic.Int64 // SSE frames the mapper could not parse
 	usageNotRead  atomic.Int64 // stream:false responses whose usage copy was given up
 	unheld        atomic.Int64 // streams whose terminal region was too large to hold for Decide
 }

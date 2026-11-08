@@ -74,6 +74,8 @@ func TestTarget_JoinsPathKeepingEscapes(t *testing.T) {
 		{"https://h/a%2Fb", "/p/x%2Fy", "/x/y", "https://h/a%2Fb/x%2Fy"},
 		{"https://h", "/openai", "/", "https://h/"},
 		{"https://h#frag", "/p/v1", "/rewritten", "https://h/rewritten"},
+		{"https://h/openai?api-version=1", "/p/v1/x", "/v1/x", "https://h/openai/v1/x?api-version=1"},
+		{"https://h?api-version=1", "/p/v1/x?a=2", "/v1/x", "https://h/v1/x?api-version=1&a=2"},
 	}
 	for _, tt := range tests {
 		got, err := Target(mustURL(t, tt.base), "", nil, mustURL(t, tt.in), tt.rest)
