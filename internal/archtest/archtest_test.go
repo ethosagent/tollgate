@@ -117,6 +117,8 @@ func TestCheck_RejectsKnownBadEdges(t *testing.T) {
 	bad := []struct{ layer, rel, imp, rule string }{
 		{"model", "internal/model", module + "/internal/forward", "D2"},
 		{"internal", "internal/forward", module, "D3"},
+		{"internal", "internal/core", module, "D3"},
+		{"internal", "internal/core", module + "/testkit", "D3"},
 		{"internal", "internal/chain", module + "/ext/monitors", "D3"},
 		{"root", ".", module + "/testkit", "D4"},
 		{"root", ".", "github.com/lib/pq", "D7"},
