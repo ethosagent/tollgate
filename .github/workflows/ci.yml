@@ -4,6 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Weekly full gate (govulncheck included) so new advisories surface without a push.
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC, the dependabot day
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -43,6 +47,7 @@ jobs:
             go.sum
             tools/go.sum
             ext/**/go.sum
+            cmd/**/go.sum
       # The same script developers and the pre-push hook run. Do NOT inline steps.
       - name: scripts/run-checks.sh
         run: scripts/run-checks.sh
@@ -55,12 +60,39 @@ jobs:
           if-no-files-found: warn
 
   compat:
-    name: build + test (minimum Go from go.mod)
+    name: build + test every module (minimum Go from go.mod)
     runs-on: ubuntu-latest
+    # The same Postgres service as gate: compat must run the sink's integration
+    # test on the minimum Go too, and with CI=true it fails without a DSN, so it
+    # can never skip silently (ADR 0011).
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tollgate
+          POSTGRES_PASSWORD: tollgate
+          POSTGRES_DB: tollgate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tollgate -d tollgate_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TOLLGATE_TEST_PG_DSN: postgres://tollgate:tollgate@127.0.0.1:5432/tollgate_test?sslmode=disable
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: go build ./...
-      - run: go test -race ./...
+          cache-dependency-path: |
+            go.sum
+            ext/**/go.sum
+            cmd/**/go.sum
+      # each_module loops over the root and every nested module (scripts/lib.sh
+      # nested_modules), so a new module is covered without editing this file.
+      - name: build + race-test every module
+        run: |
+          . scripts/lib.sh
+          each_module sh -c 'echo "::group::$MODULE" && go build ./... && go test -race -count=1 ./... && echo "::endgroup::"'
