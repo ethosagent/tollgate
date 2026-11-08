@@ -1,12 +1,11 @@
 package tollgate
 
 import (
-	"cmp"
 	"log/slog"
 	"net/http"
 	"time"
 
-	"github.com/ethosagent/tollgate/internal/resolve"
+	"github.com/ethosagent/tollgate/internal/core"
 )
 
 // Options configures a Proxy. The zero value is valid: every nil extension
@@ -92,35 +91,7 @@ type Limits struct {
 }
 
 // DefaultLimits returns the limits a zero Limits field falls back to.
-func DefaultLimits() Limits {
-	return Limits{
-		MaxRequestBody:        16 << 20,
-		MaxResponseCopy:       1 << 20,
-		ConnectTimeout:        10 * time.Second,
-		FirstByteTimeout:      60 * time.Second,
-		IdleStreamTimeout:     120 * time.Second,
-		MaxCallDuration:       15 * time.Minute,
-		HookBeforeDeadline:    50 * time.Millisecond,
-		HookChainDeadline:     200 * time.Millisecond,
-		ExtensionDeadline:     5 * time.Second,
-		AdmissionDeadline:     30 * time.Second,
-		FinalizerDeadline:     200 * time.Millisecond,
-		FinalizerCallDeadline: time.Second,
-		FinalizerBudget:       2,
-		RecoveryCeiling:       10,
-		EventBuffer:           1024,
-		MetricQueue:           10_000,
-		MetricBatch:           500,
-		MetricFlushInterval:   time.Second,
-		MetricWriteTimeout:    10 * time.Second,
-		MetricFailAfter:       3,
-		SessionTTL:            5 * time.Minute,
-		MaxSessions:           100_000,
-		MaxConnsPerHost:       100,
-		MaxIdleConnsPerHost:   100, // = MaxConnsPerHost: no churn below the connection cap
-		IdleConnTimeout:       30 * time.Second,
-	}
-}
+func DefaultLimits() Limits { return Limits(core.DefaultLimits()) }
 
 // HeaderNames are the request headers tollgate reads. They are options, not
 // constants, so the host picks its own. tollgate strips them before
@@ -132,70 +103,28 @@ type HeaderNames struct {
 }
 
 // DefaultHeaderNames returns the header names used when none are set.
-func DefaultHeaderNames() HeaderNames {
-	return HeaderNames{
-		TenantKey:   "x-proxy-key",
-		Session:     "x-session-id",
-		UpstreamURL: "x-upstream-url",
-	}
-}
+func DefaultHeaderNames() HeaderNames { return HeaderNames(core.DefaultHeaderNames()) }
 
-// withDefaults returns a copy with every zero value replaced by its default.
-func (o Options) withDefaults() Options {
-	if o.Auth == nil {
-		o.Auth = NoAuth{}
-	}
-	if o.Admission == nil {
-		o.Admission = Unlimited{}
-	}
-	if o.Metrics == nil {
-		o.Metrics = DiscardSink{}
-	}
-	if o.Logger == nil {
-		o.Logger = slog.New(slog.DiscardHandler)
-	}
-	o.Limits = o.Limits.withDefaults()
-	o.Headers = o.Headers.withDefaults()
-	if o.Providers == nil {
-		o.Providers = resolve.New(nil)
-	}
-	return o
-}
+// Validate reports every problem with the options after defaults are
+// applied. New calls it; hosts may call it to check config early.
+func (o Options) Validate() error { return o.core().Validate() }
 
-func (l Limits) withDefaults() Limits {
-	d := DefaultLimits()
-	l.MaxRequestBody = cmp.Or(l.MaxRequestBody, d.MaxRequestBody)
-	l.MaxResponseCopy = cmp.Or(l.MaxResponseCopy, d.MaxResponseCopy)
-	l.ConnectTimeout = cmp.Or(l.ConnectTimeout, d.ConnectTimeout)
-	l.FirstByteTimeout = cmp.Or(l.FirstByteTimeout, d.FirstByteTimeout)
-	l.IdleStreamTimeout = cmp.Or(l.IdleStreamTimeout, d.IdleStreamTimeout)
-	l.MaxCallDuration = cmp.Or(l.MaxCallDuration, d.MaxCallDuration)
-	l.HookBeforeDeadline = cmp.Or(l.HookBeforeDeadline, d.HookBeforeDeadline)
-	l.HookChainDeadline = cmp.Or(l.HookChainDeadline, d.HookChainDeadline)
-	l.ExtensionDeadline = cmp.Or(l.ExtensionDeadline, d.ExtensionDeadline)
-	l.AdmissionDeadline = cmp.Or(l.AdmissionDeadline, d.AdmissionDeadline)
-	l.FinalizerDeadline = cmp.Or(l.FinalizerDeadline, d.FinalizerDeadline)
-	l.FinalizerCallDeadline = cmp.Or(l.FinalizerCallDeadline, d.FinalizerCallDeadline)
-	l.FinalizerBudget = cmp.Or(l.FinalizerBudget, d.FinalizerBudget)
-	l.RecoveryCeiling = cmp.Or(l.RecoveryCeiling, d.RecoveryCeiling)
-	l.EventBuffer = cmp.Or(l.EventBuffer, d.EventBuffer)
-	l.MetricQueue = cmp.Or(l.MetricQueue, d.MetricQueue)
-	l.MetricBatch = cmp.Or(l.MetricBatch, d.MetricBatch)
-	l.MetricFlushInterval = cmp.Or(l.MetricFlushInterval, d.MetricFlushInterval)
-	l.MetricWriteTimeout = cmp.Or(l.MetricWriteTimeout, d.MetricWriteTimeout)
-	l.MetricFailAfter = cmp.Or(l.MetricFailAfter, d.MetricFailAfter)
-	l.SessionTTL = cmp.Or(l.SessionTTL, d.SessionTTL)
-	l.MaxSessions = cmp.Or(l.MaxSessions, d.MaxSessions)
-	l.MaxConnsPerHost = cmp.Or(l.MaxConnsPerHost, d.MaxConnsPerHost)
-	l.MaxIdleConnsPerHost = cmp.Or(l.MaxIdleConnsPerHost, l.MaxConnsPerHost)
-	l.IdleConnTimeout = cmp.Or(l.IdleConnTimeout, d.IdleConnTimeout)
-	return l
-}
-
-func (h HeaderNames) withDefaults() HeaderNames {
-	d := DefaultHeaderNames()
-	h.TenantKey = cmp.Or(h.TenantKey, d.TenantKey)
-	h.Session = cmp.Or(h.Session, d.Session)
-	h.UpstreamURL = cmp.Or(h.UpstreamURL, d.UpstreamURL)
-	return h
+// core copies o into the engine's mirror of it (ADR 0016). Limits and
+// HeaderNames convert directly: their field lists must match core's or this
+// does not compile. TestOptions_MirrorCore checks no Options field is missed.
+func (o Options) core() core.Options {
+	return core.Options{
+		Auth:                     o.Auth,
+		Admission:                o.Admission,
+		Providers:                o.Providers,
+		Sessions:                 o.Sessions,
+		Metrics:                  o.Metrics,
+		Finalizers:               o.Finalizers,
+		Transport:                o.Transport,
+		Logger:                   o.Logger,
+		Limits:                   core.Limits(o.Limits),
+		Headers:                  core.HeaderNames(o.Headers),
+		MeasureSessionPrediction: o.MeasureSessionPrediction,
+		DisablePrivacyMode:       o.DisablePrivacyMode,
+	}
 }
