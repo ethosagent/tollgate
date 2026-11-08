@@ -40,6 +40,8 @@ func TerminalFor(f model.WireFormat) (Terminal, error) {
 	switch f {
 	case model.WireOpenAIChat:
 		return openAITerminal{}, nil
+	case model.WireOpenAIResponses:
+		return responsesTerminal{}, nil
 	case model.WireAnthropicMessages:
 		return anthropicTerminal{}, nil
 	}

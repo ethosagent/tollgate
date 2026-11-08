@@ -235,7 +235,9 @@ func TestFakeUpstream_RecordsClientCancel(t *testing.T) {
 // Fixtures must never carry real credentials or real provider ids.
 func TestFixtures_HaveNoRealKeysOrIDs(t *testing.T) {
 	keyRe := regexp.MustCompile(`sk-[A-Za-z0-9_-]{16,}|sk-ant-`)
-	idRe := regexp.MustCompile(`(chatcmpl-|msg_|toolu_|call_)[A-Za-z0-9]+`)
+	idRe := regexp.MustCompile(`(chatcmpl-|msg_|toolu_|call_|resp_)[A-Za-z0-9]+`)
+	// Field names of the Responses API that merely start like an id.
+	fieldNames := map[string]bool{"call_id": true, "call_arguments": true, "call_output": true}
 	names := FixtureNames()
 	if len(names) < 18 {
 		t.Fatalf("found %d fixtures, want at least 18", len(names))
@@ -249,7 +251,7 @@ func TestFixtures_HaveNoRealKeysOrIDs(t *testing.T) {
 			t.Errorf("%s contains something that looks like an API key", name)
 		}
 		for _, id := range idRe.FindAll(data, -1) {
-			if !bytes.Contains(id, []byte("fixture")) {
+			if !bytes.Contains(id, []byte("fixture")) && !fieldNames[string(id)] {
 				t.Errorf("%s contains id %q; fixture ids must contain \"fixture\"", name, id)
 			}
 		}

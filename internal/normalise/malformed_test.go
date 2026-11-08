@@ -15,6 +15,9 @@ func TestMapFrame_Malformed(t *testing.T) {
 		{model.WireOpenAIChat, "truncated json", `{"choices":[`},
 		{model.WireOpenAIChat, "not json", `hello`},
 		{model.WireOpenAIChat, "wrong field type", `{"choices":"x"}`},
+		{model.WireOpenAIResponses, "truncated json", `{"type":"response.output_text.delta",`},
+		{model.WireOpenAIResponses, "not json", `hello`},
+		{model.WireOpenAIResponses, "wrong field type", `{"type":5}`},
 		{model.WireAnthropicMessages, "truncated json", `{"type":"content_block_delta",`},
 		{model.WireAnthropicMessages, "not json", `hello`},
 		{model.WireAnthropicMessages, "wrong field type", `{"type":5}`},
@@ -39,6 +42,10 @@ func TestMapFrame_UnknownAndBlankAreSkipped(t *testing.T) {
 		{model.WireOpenAIChat, "blank", ``},
 		{model.WireOpenAIChat, "done sentinel", `[DONE]`},
 		{model.WireOpenAIChat, "empty object", `{}`},
+		{model.WireOpenAIResponses, "blank", ``},
+		{model.WireOpenAIResponses, "done sentinel", `[DONE]`},
+		{model.WireOpenAIResponses, "empty object", `{}`},
+		{model.WireOpenAIResponses, "unknown type", `{"type":"response.future_event","delta":"x"}`},
 		{model.WireAnthropicMessages, "blank", ``},
 		{model.WireAnthropicMessages, "ping", `{"type":"ping"}`},
 		{model.WireAnthropicMessages, "unknown type", `{"type":"future_event","x":1}`},
@@ -57,7 +64,7 @@ func TestMapFrame_UnknownAndBlankAreSkipped(t *testing.T) {
 }
 
 func TestMapBody_Malformed(t *testing.T) {
-	for _, wire := range []model.WireFormat{model.WireOpenAIChat, model.WireAnthropicMessages} {
+	for _, wire := range []model.WireFormat{model.WireOpenAIChat, model.WireOpenAIResponses, model.WireAnthropicMessages} {
 		w, _ := ForWire(wire)
 		for name, body := range map[string]string{
 			"empty":          ``,

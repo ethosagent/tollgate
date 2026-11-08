@@ -46,8 +46,11 @@ func requestFixtures() []string {
 }
 
 func wireOf(name string) model.WireFormat {
-	if fixtures.PathFor(name) == "/v1/messages" {
+	switch fixtures.PathFor(name) {
+	case "/v1/messages":
 		return model.WireAnthropicMessages
+	case "/v1/responses":
+		return model.WireOpenAIResponses
 	}
 	return model.WireOpenAIChat
 }

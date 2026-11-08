@@ -47,7 +47,7 @@ func TestParse_DecodesBodyOnce(t *testing.T) {
 			t.Fatalf("%s: ParseRequest decoded %d times (err %v), want 1", name, n, err)
 		}
 	}
-	for _, name := range []string{"openai/chat", "anthropic/messages"} {
+	for _, name := range []string{"openai/chat", "openai/responses", "anthropic/messages"} {
 		w, _ := ForWire(wireOf(name))
 		n = 0
 		if _, err := w.MapBody(fixture(t, name)); err != nil || n != 1 {
@@ -61,7 +61,7 @@ func TestParse_DecodesBodyOnce(t *testing.T) {
 // so Finish must not claim truncation; the queue's End.Finish says how the
 // call really ended.
 func TestEventMapper_GapSuppressesFalseTruncation(t *testing.T) {
-	for _, name := range []string{"openai/chat-stream-text", "anthropic/messages-stream-text"} {
+	for _, name := range []string{"openai/chat-stream-text", "openai/responses-stream-text", "anthropic/messages-stream-text"} {
 		t.Run(name, func(t *testing.T) {
 			w, _ := ForWire(wireOf(name))
 			frames := fixtures.Chunks(name)

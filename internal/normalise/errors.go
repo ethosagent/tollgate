@@ -18,12 +18,12 @@ const (
 	ShapeAnthropic
 )
 
-// ShapeForWire picks the error shape for a wire format: OpenAI chat gets the
-// OpenAI shape, Anthropic messages the Anthropic shape, anything else the
+// ShapeForWire picks the error shape for a wire format: OpenAI chat and
+// Responses get the OpenAI shape, Anthropic messages the Anthropic shape, anything else the
 // generic one.
 func ShapeForWire(w model.WireFormat) ErrorShape {
 	switch w {
-	case model.WireOpenAIChat:
+	case model.WireOpenAIChat, model.WireOpenAIResponses:
 		return ShapeOpenAI
 	case model.WireAnthropicMessages:
 		return ShapeAnthropic

@@ -47,7 +47,10 @@ func TestParseRequest_Fixtures(t *testing.T) {
 			want    []model.Message
 		}{fmt.Sprintf("anthropic/request-agent-step-%d", step), "claude-sonnet-5-5", false, agentMessages(step-1, agentTask)})
 	}
-	covered := map[string]bool{}
+	covered := map[string]bool{
+		"openai/request-responses-stream": true, // TestParseRequest_ResponsesFixtures
+		"openai/request-responses-tools":  true,
+	}
 	for _, tc := range tests {
 		covered[tc.fixture] = true
 		t.Run(tc.fixture, func(t *testing.T) {

@@ -50,6 +50,8 @@ func ForWire(f model.WireFormat) (Wire, error) {
 	switch f {
 	case model.WireOpenAIChat:
 		return openAIWire{}, nil
+	case model.WireOpenAIResponses:
+		return responsesWire{}, nil
 	case model.WireAnthropicMessages:
 		return anthropicWire{}, nil
 	}

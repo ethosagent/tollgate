@@ -24,7 +24,8 @@ func BenchmarkParseRequest(b *testing.B) {
 }
 
 func BenchmarkEventMapper(b *testing.B) {
-	for _, name := range []string{"openai/chat-stream-tools", "anthropic/messages-stream-thinking"} {
+	for _, name := range []string{"openai/chat-stream-tools", "openai/responses-stream-tools",
+		"openai/chat-stream-text", "openai/responses-stream-text", "anthropic/messages-stream-thinking"} {
 		w, _ := ForWire(wireOf(name))
 		frames := fixtures.Chunks(name)
 		b.Run(name, func(b *testing.B) {

@@ -111,7 +111,7 @@ func TestNormalise_FixturesMatchGolden(t *testing.T) {
 }
 
 func TestForWire(t *testing.T) {
-	for _, w := range []model.WireFormat{model.WireOpenAIChat, model.WireAnthropicMessages} {
+	for _, w := range []model.WireFormat{model.WireOpenAIChat, model.WireOpenAIResponses, model.WireAnthropicMessages} {
 		if _, err := ForWire(w); err != nil {
 			t.Errorf("ForWire(%s): %v", w, err)
 		}
