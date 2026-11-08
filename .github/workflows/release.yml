@@ -1,0 +1,125 @@
+name: release
+
+# Releases the tollgated binary. Its version follows its own module tag
+# (ADR 0010, ADR 0017): pushing cmd/tollgated/v0.1.0 publishes tollgated v0.1.0.
+# Steps and tag order: docs/runbooks/release.md.
+on:
+  push:
+    tags: ["cmd/tollgated/v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: release guard + gate
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: tollgate
+          POSTGRES_PASSWORD: tollgate
+          POSTGRES_DB: tollgate_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U tollgate -d tollgate_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TOLLGATE_TEST_PG_DSN: postgres://tollgate:tollgate@127.0.0.1:5432/tollgate_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # the guard needs the root tags reachable from HEAD
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: |
+            go.sum
+            tools/go.sum
+            ext/**/go.sum
+            cmd/**/go.sum
+      - name: scripts/check-release.sh
+        run: scripts/check-release.sh "$GITHUB_REF_NAME"
+      - name: scripts/run-checks.sh
+        run: scripts/run-checks.sh
+      - name: Upload gate logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-gate-logs
+          path: .logs/
+          if-no-files-found: warn
+
+  build:
+    name: build ${{ matrix.goos }}/${{ matrix.goarch }}
+    needs: verify
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: stable
+          cache-dependency-path: cmd/tollgated/go.sum
+      # GOWORK=off: build what `go install ...@<tag>` builds, against the
+      # published root release the module requires (the guard checked it).
+      - name: build and package
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+          GOWORK: "off"
+        run: |
+          version="${GITHUB_REF_NAME#cmd/tollgated/}"
+          name="tollgated_${version}_${GOOS}_${GOARCH}"
+          exe=tollgated; [ "$GOOS" = windows ] && exe=tollgated.exe
+          mkdir -p "dist/$name"
+          go -C cmd/tollgated build -trimpath -ldflags "-s -w -X main.version=${version}" -o "../../dist/$name/$exe" .
+          cp README.md "dist/$name/"
+          cd dist
+          if [ "$GOOS" = windows ]; then zip -qr "$name.zip" "$name"; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+          ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tollgated-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: GitHub release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh release create; this job only
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: tollgated-*
+          path: dist
+          merge-multiple: true
+      - name: checksums
+        working-directory: dist
+        run: sha256sum -- *.tar.gz *.zip > SHA256SUMS && cat SHA256SUMS
+      - name: gh release create
+        working-directory: dist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          version="${GITHUB_REF_NAME#cmd/tollgated/}"
+          pre=(); case "$version" in *-*) pre=(--prerelease) ;; esac # v0.2.0-rc.1
+          gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes "${pre[@]}" \
+            --title "tollgated ${version}" -- *.tar.gz *.zip SHA256SUMS

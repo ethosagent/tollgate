@@ -1,5 +1,7 @@
 # Thin wrappers. The logic lives in scripts/ so make, hooks and CI run the same thing.
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo 0.0.0-dev)
+# The binary's version follows its own module tag, cmd/tollgated/vX.Y.Z (ADR 0017),
+# exactly as .github/workflows/release.yml stamps it.
+VERSION ?= $(shell git describe --tags --match 'cmd/tollgated/v*' --always --dirty 2>/dev/null | sed 's|^cmd/tollgated/||')
 
 .PHONY: build test check fmt lint hooks run clean
 
