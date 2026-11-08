@@ -90,7 +90,19 @@ type Limits struct {
 	IdleConnTimeout     time.Duration
 }
 
-// DefaultLimits returns the limits a zero Limits field falls back to.
+// DefaultLimits returns the limits a zero Limits field falls back to:
+//
+//	MaxRequestBody 16 MiB, MaxResponseCopy 1 MiB
+//	ConnectTimeout 10s, FirstByteTimeout 60s, IdleStreamTimeout 120s, MaxCallDuration 15m
+//	HookBeforeDeadline 50ms, HookChainDeadline 200ms
+//	ExtensionDeadline 5s, AdmissionDeadline 30s
+//	FinalizerDeadline 200ms, FinalizerCallDeadline 1s, FinalizerBudget 2, RecoveryCeiling 10
+//	EventBuffer 1024, MetricQueue 10000, MetricBatch 500, MetricFlushInterval 1s
+//	MetricWriteTimeout 10s, MetricFailAfter 3
+//	SessionTTL 5m, MaxSessions 100000
+//	MaxConnsPerHost 100, MaxIdleConnsPerHost = MaxConnsPerHost, IdleConnTimeout 30s
+//
+// TestDefaultLimits_MatchDocumentedValues pins these values.
 func DefaultLimits() Limits { return Limits(core.DefaultLimits()) }
 
 // HeaderNames are the request headers tollgate reads. They are options, not

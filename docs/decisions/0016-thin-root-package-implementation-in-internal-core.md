@@ -32,6 +32,12 @@ package (layer "internal", D3). `core.Limits` and `core.HeaderNames` repeat
 the root structs' fields, so the root converts them with a plain type
 conversion; `core.Options` mirrors `Options` field for field.
 
+The rule for what the root defines rather than aliases: the configuration a
+host writes (`Options`, `Limits`, `HeaderNames`) and `Proxy`, because hosts
+read their field and method docs in `go doc`. Model types an extension
+receives (`Call`, `Tenant`, `Policy`, ...) stay aliases of `internal/model`
+(ADR 0003); their docs are read in that package.
+
 ## Consequences
 
 - The root is five files; the engine has the boundaries of any internal package.

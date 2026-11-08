@@ -2,12 +2,10 @@ package testkit
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -102,7 +100,7 @@ func (f *FakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(io.LimitReader(r.Body, maxRecordedBody))
 	name := r.Header.Get(FixtureHeader)
 	if name == "" {
-		name = defaultFixture(r.URL.Path, body)
+		name = fixtures.Default(r.URL.Path, body)
 	}
 	chunks := replayable()[name]
 	idx := f.record(r, received, body, name, chunks != nil)
@@ -110,7 +108,7 @@ func (f *FakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "testkit: no fixture for "+r.URL.Path+" "+name, http.StatusNotFound)
 		return
 	}
-	if !wait(r.Context(), f.opts.FirstByteDelay) {
+	if !fixtures.Wait(r.Context(), f.opts.FirstByteDelay) {
 		f.markCanceled(idx)
 		return
 	}
@@ -126,7 +124,7 @@ func (f *FakeUpstream) writeChunks(ctx context.Context, w http.ResponseWriter, i
 			// Abort without finishing the chunked body: the client sees a cut stream.
 			panic(http.ErrAbortHandler)
 		}
-		if i > 0 && !wait(ctx, f.opts.ChunkDelay) {
+		if i > 0 && !fixtures.Wait(ctx, f.opts.ChunkDelay) {
 			f.markCanceled(idx)
 			return
 		}
@@ -189,37 +187,3 @@ var replayable = sync.OnceValue(func() map[string][][]byte {
 	}
 	return m
 })
-
-// defaultFixture picks a fixture from the path and the body's stream flag.
-func defaultFixture(path string, body []byte) string {
-	var req struct {
-		Stream bool `json:"stream"`
-	}
-	_ = json.Unmarshal(body, &req) // a body that is not JSON counts as stream:false
-	switch {
-	case strings.HasSuffix(path, fixtures.OpenAIChatPath) && req.Stream:
-		return "openai/chat-stream-text"
-	case strings.HasSuffix(path, fixtures.OpenAIChatPath):
-		return "openai/chat"
-	case strings.HasSuffix(path, fixtures.AnthropicMessagesPath) && req.Stream:
-		return "anthropic/messages-stream-text"
-	case strings.HasSuffix(path, fixtures.AnthropicMessagesPath):
-		return "anthropic/messages"
-	}
-	return ""
-}
-
-// wait sleeps for d, returning false if ctx ends first. d <= 0 returns at once.
-func wait(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
-}

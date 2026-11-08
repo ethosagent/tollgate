@@ -62,8 +62,9 @@ type Limits struct {
 	IdleConnTimeout       time.Duration
 }
 
-// DefaultLimits returns the limits a zero Limits field falls back to
-// (tollgate.DefaultLimits documents them).
+// DefaultLimits returns the limits a zero Limits field falls back to. These
+// values are the documented defaults: the root tollgate.DefaultLimits returns
+// them and TestDefaultLimits_MatchDocumentedValues pins them.
 func DefaultLimits() Limits {
 	return Limits{
 		MaxRequestBody:        16 << 20,

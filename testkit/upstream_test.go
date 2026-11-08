@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/ethosagent/tollgate/internal/fixtures"
 )
 
 // send sends a request to the fake and returns the response.
@@ -131,7 +133,7 @@ func TestPathFor(t *testing.T) {
 		if got := PathFor(name); got != want {
 			t.Errorf("PathFor(%q) = %q, want %q", name, got, want)
 		}
-		if got := defaultFixture(want, []byte(`{}`)); !strings.HasPrefix(got, strings.Split(name, "/")[0]+"/") {
+		if got := fixtures.Default(want, []byte(`{}`)); !strings.HasPrefix(got, strings.Split(name, "/")[0]+"/") {
 			t.Errorf("PathFor(%q) is not served by the same provider (%q)", name, got)
 		}
 	}

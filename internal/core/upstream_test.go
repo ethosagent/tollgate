@@ -2,11 +2,9 @@ package core_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,7 +15,8 @@ import (
 // This is a trimmed copy of testkit's FakeUpstream (same replay rules, no
 // write timing). Rule D3 keeps internal/* tests off testkit, which imports
 // the root package (ADR 0016); the recorded data is shared through
-// internal/fixtures.
+// internal/fixtures, with the fixture choice (fixtures.Default) and delays
+// (fixtures.Wait).
 
 // fixtureHeader selects the fixture the fake replays for one request, as
 // testkit.FixtureHeader does.
@@ -79,7 +78,7 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 	body, _ := io.ReadAll(r.Body)
 	name := r.Header.Get(fixtureHeader)
 	if name == "" {
-		name = defaultFixture(r.URL.Path, body)
+		name = fixtures.Default(r.URL.Path, body)
 	}
 	chunks := fixtures.Chunks(name)
 	idx := f.record(r, body, name, chunks != nil)
@@ -87,7 +86,7 @@ func (f *fakeUpstream) serve(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "fake upstream: no fixture for "+r.URL.Path+" "+name, http.StatusNotFound)
 		return
 	}
-	if !wait(r.Context(), f.opts.FirstByteDelay) {
+	if !fixtures.Wait(r.Context(), f.opts.FirstByteDelay) {
 		f.markCanceled(idx)
 		return
 	}
@@ -106,7 +105,7 @@ func (f *fakeUpstream) writeChunks(ctx context.Context, w http.ResponseWriter, i
 		if f.opts.FailAfterChunks > 0 && i == f.opts.FailAfterChunks {
 			panic(http.ErrAbortHandler) // the client sees a cut stream
 		}
-		if i > 0 && !wait(ctx, f.opts.ChunkDelay) {
+		if i > 0 && !fixtures.Wait(ctx, f.opts.ChunkDelay) {
 			f.markCanceled(idx)
 			return
 		}
@@ -135,38 +134,4 @@ func (f *fakeUpstream) markCanceled(idx int) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reqs[idx].Canceled = true
-}
-
-// defaultFixture picks a fixture from the path and the body's stream flag.
-func defaultFixture(path string, body []byte) string {
-	var req struct {
-		Stream bool `json:"stream"`
-	}
-	_ = json.Unmarshal(body, &req) // a body that is not JSON counts as stream:false
-	switch {
-	case strings.HasSuffix(path, fixtures.OpenAIChatPath) && req.Stream:
-		return "openai/chat-stream-text"
-	case strings.HasSuffix(path, fixtures.OpenAIChatPath):
-		return "openai/chat"
-	case strings.HasSuffix(path, fixtures.AnthropicMessagesPath) && req.Stream:
-		return "anthropic/messages-stream-text"
-	case strings.HasSuffix(path, fixtures.AnthropicMessagesPath):
-		return "anthropic/messages"
-	}
-	return ""
-}
-
-// wait sleeps for d, returning false if ctx ends first. d <= 0 returns at once.
-func wait(ctx context.Context, d time.Duration) bool {
-	if d <= 0 {
-		return ctx.Err() == nil
-	}
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-t.C:
-		return true
-	case <-ctx.Done():
-		return false
-	}
 }
