@@ -112,3 +112,58 @@ func TestEvents_ResponsesFailedAndIncompleteStreams(t *testing.T) {
 		t.Fatalf("summary finish = %q", s.FinishReason)
 	}
 }
+
+// TestResponsesParseRequest_AllocBudget keeps the request parser to one
+// decode pass per item (HOT-4): a second decode of content/output/arguments
+// shows up as extra allocations and scans. Budgets are the measured cost (22 and
+// 5) plus slack; it was 34 for the tools fixture with the double decode.
+func TestResponsesParseRequest_AllocBudget(t *testing.T) {
+	w, _ := ForWire(model.WireOpenAIResponses)
+	for name, max := range map[string]float64{"openai/request-responses-tools": 24, "openai/request-responses-stream": 8} {
+		body := fixture(t, name)
+		got := testing.AllocsPerRun(50, func() {
+			var c model.Call
+			if err := w.ParseRequest(body, &c); err != nil {
+				t.Fatal(err)
+			}
+		})
+		if got > max {
+			t.Errorf("%s: %v allocs per parse, budget %v", name, got, max)
+		}
+	}
+}
+
+// TestResponsesParseRequest_StringInputAndShapes covers the input shapes the
+// one-pass decode must keep: bare string, null, array, and an item field of
+// an unexpected JSON type that must still error (content) or be ignored.
+func TestResponsesParseRequest_StringInputAndShapes(t *testing.T) {
+	w, _ := ForWire(model.WireOpenAIResponses)
+	tests := []struct {
+		name, body string
+		msgs       int
+		wantErr    bool
+	}{
+		{"string input", `{"model":"m","input":"hi"}`, 1, false},
+		{"null input", `{"model":"m","input":null}`, 0, false},
+		{"absent input", `{"model":"m"}`, 0, false},
+		{"array input", `{"model":"m","input":[{"role":"user","content":"a"},{"role":"user","content":[{"type":"input_text","text":"b"}]}]}`, 2, false},
+		{"object content errors", `{"model":"m","input":[{"role":"user","content":{"x":1}}]}`, 0, true},
+		{"object arguments tolerated", `{"model":"m","input":[{"type":"tool_search_call","arguments":{"q":1}}]}`, 0, false},
+		{"escaped output", `{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":"a\"b\n"}]}`, 1, false},
+		{"input number errors", `{"model":"m","input":5}`, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var c model.Call
+			err := w.ParseRequest([]byte(tt.body), &c)
+			if (err != nil) != tt.wantErr || len(c.Messages) != tt.msgs {
+				t.Fatalf("err=%v msgs=%d, want err=%v msgs=%d", err, len(c.Messages), tt.wantErr, tt.msgs)
+			}
+		})
+	}
+	var c model.Call
+	_ = w.ParseRequest([]byte(`{"model":"m","input":[{"type":"function_call_output","call_id":"c","output":"a\"b\n"}]}`), &c)
+	if c.Messages[0].Text != "a\"b\n" {
+		t.Fatalf("text = %q", c.Messages[0].Text)
+	}
+}

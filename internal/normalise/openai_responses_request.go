@@ -1,47 +1,135 @@
 package normalise
 
 import (
+	"bytes"
 	"encoding/json"
 
 	"github.com/ethosagent/tollgate/internal/model"
 )
 
-// orInput is a Responses "input": a bare string (one user message) or an
-// array of items.
+// orInput is the slow-path "input": a bare string (one user message) or an
+// array. The common array is decoded directly into []orItem, in one pass;
+// orInput only runs when that fails (a string input, or a malformed one).
 type orInput []orItem
 
 func (in *orInput) UnmarshalJSON(b []byte) error {
-	items, err := decodeContent(b, func(s string) orItem {
-		return orItem{Type: "message", Role: "user", Content: quoteJSON(s)}
-	})
-	if err != nil {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || b[0] != '[' {
+		items, err := decodeContent(b, func(s string) orItem {
+			return orItem{Type: "message", Role: "user", Content: orText{s: s}}
+		})
+		*in = items
+		return err
+	}
+	// Size the slice up front: orItem is large and growing it by doubling
+	// was most of this parser's allocated bytes.
+	items := make([]orItem, 0, min(len(b)/itemBytesGuess+1, maxItemsGuess))
+	if err := json.Unmarshal(b, &items); err != nil {
 		return err
 	}
 	*in = items
 	return nil
 }
 
+// An input item is rarely under this many bytes; the guess only sizes the
+// first allocation, the slice still grows past it.
+const (
+	itemBytesGuess = 96
+	maxItemsGuess  = 4096
+)
+
+// orText is a content or output field read straight to its text: a string, an
+// array of typed parts (joined) or null. Any other shape sets bad instead of
+// failing the decode: only the item types that read the field reject it (a
+// message with object content is an error; an unmodelled item is skipped).
+type orText struct {
+	s   string
+	bad bool
+}
+
+func (t *orText) UnmarshalJSON(b []byte) error {
+	if s, ok := plainString(b); ok {
+		t.s = s
+		return nil
+	}
+	var c oaContent
+	if err := c.UnmarshalJSON(b); err != nil {
+		t.bad = true
+		return nil
+	}
+	t.s = c.text()
+	return nil
+}
+
+// read returns the text, or the content error for a field of the wrong shape.
+func (t orText) read() (string, error) {
+	if t.bad {
+		return "", errContent
+	}
+	return t.s, nil
+}
+
+// plainString returns the text of a JSON string without escapes, which is the
+// usual case and needs no second decode. b is already validated JSON.
+func plainString(b []byte) (string, bool) {
+	if n := len(b); n >= 2 && b[0] == '"' && bytes.IndexByte(b, '\\') < 0 {
+		return string(b[1 : n-1]), true
+	}
+	return "", false
+}
+
+// orParts is a reasoning summary: typed text parts. A wrong shape sets bad;
+// only a reasoning item rejects it.
+type orParts struct {
+	parts []oaPart
+	bad   bool
+}
+
+func (p *orParts) UnmarshalJSON(b []byte) error {
+	if json.Unmarshal(b, &p.parts) != nil {
+		p.parts, p.bad = nil, true
+	}
+	return nil
+}
+
+// orArgs is function_call arguments: the JSON text in a string. A value of
+// another type (tool_search_call carries an object) is ignored, never an error.
+type orArgs json.RawMessage
+
+func (a *orArgs) UnmarshalJSON(b []byte) error {
+	if len(b) == 0 || b[0] != '"' {
+		return nil
+	}
+	s, ok := plainString(b)
+	if !ok && json.Unmarshal(b, &s) != nil {
+		return nil
+	}
+	*a = orArgs(rawArguments(s))
+	return nil
+}
+
 // orItem is one input item. The fields whose JSON type differs between item
-// types (content, arguments, output, summary, action, input) stay raw and are
-// decoded only by the branch of the item types that use them, so an item the
-// builder does not model can never fail the parse: tool_search_call.arguments
-// and computer_call_output.output are objects, for example. Item types with no
-// place in the neutral model (item_reference, web_search_call, ...) are skipped.
+// types stay lenient or raw and are used only by the branch of the item types
+// that read them, so an item the builder does not model can never fail the
+// parse: tool_search_call.arguments and computer_call_output.output are
+// objects, for example. Item types with no place in the neutral model
+// (item_reference, web_search_call, ...) are skipped. Each field is decoded
+// once, by the decoder that reads the item.
 type orItem struct {
 	Type      string          `json:"type"`
 	ID        string          `json:"id"`
 	Role      string          `json:"role"`
 	CallID    string          `json:"call_id"`
 	Name      string          `json:"name"`
-	Content   json.RawMessage `json:"content"`
-	Arguments json.RawMessage `json:"arguments"`
-	Output    json.RawMessage `json:"output"`
-	Summary   json.RawMessage `json:"summary"`
+	Content   orText          `json:"content"`
+	Arguments orArgs          `json:"arguments"`
+	Output    orText          `json:"output"`
+	Summary   orParts         `json:"summary"`
 	Input     json.RawMessage `json:"input"`
 	Action    json.RawMessage `json:"action"`
 }
 
-type orRequest struct {
+type orHead struct {
 	Model              string `json:"model"`
 	Stream             bool   `json:"stream"`
 	Instructions       string `json:"instructions"`
@@ -50,6 +138,10 @@ type orRequest struct {
 		Effort  string `json:"effort"`
 		Summary string `json:"summary"`
 	} `json:"reasoning"`
+}
+
+type orRequest struct {
+	orHead
 	Input orInput `json:"input"`
 }
 
@@ -106,21 +198,20 @@ type orBuilder struct {
 func (b *orBuilder) add(it *orItem) error {
 	switch it.Type {
 	case "reasoning":
-		var parts []oaPart
-		if err := decodeRaw(it.Summary, &parts); err != nil {
-			return err
+		if it.Summary.bad {
+			return errContent
 		}
-		for _, p := range parts {
+		for _, p := range it.Summary.parts {
 			b.reasoning += p.Text
 		}
 	case "function_call":
-		b.toolCall(it.CallID, it.Name, argumentsOf(it.Arguments))
+		b.toolCall(it.CallID, it.Name, json.RawMessage(it.Arguments))
 	case "custom_tool_call":
 		b.toolCall(it.CallID, it.Name, customInput(it.Input))
 	case "local_shell_call":
 		b.toolCall(it.CallID, localShellName, actionOf(it.Action))
 	case "function_call_output", "custom_tool_call_output", "local_shell_call_output":
-		text, err := textOf(it.Output)
+		text, err := it.Output.read()
 		if err != nil {
 			return err
 		}
@@ -133,7 +224,7 @@ func (b *orBuilder) add(it *orItem) error {
 		if it.Role == "" { // an item without a role or type is not a message
 			return nil
 		}
-		text, err := textOf(it.Content)
+		text, err := it.Content.read()
 		if err != nil {
 			return err
 		}
@@ -158,16 +249,6 @@ func decodeRaw(raw json.RawMessage, v any) error {
 		return nil
 	}
 	return json.Unmarshal(raw, v)
-}
-
-// textOf reads a content or output field: a string, an array of typed parts
-// or null.
-func textOf(raw json.RawMessage) (string, error) {
-	var c oaContent
-	if err := decodeRaw(raw, &c); err != nil {
-		return "", err
-	}
-	return c.text(), nil
 }
 
 // argumentsOf returns function_call arguments (a JSON text in a string).
