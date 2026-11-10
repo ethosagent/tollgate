@@ -27,10 +27,16 @@ type Options struct {
 	Sessions   SessionStrategy // default: header-or-predict (internal/session)
 	Metrics    MetricSink      // default: DiscardSink{}
 	Finalizers []Finalizer     // default: none (zero overhead)
-	Transport  http.RoundTripper
-	Logger     *slog.Logger // default: discards everything
-	Limits     Limits
-	Headers    HeaderNames
+	// Transport is the upstream round tripper. Default: a pooled transport
+	// with compression disabled, so tollgate never adds Accept-Encoding or
+	// decodes a body and the client's own Accept-Encoding passes through. A
+	// custom *http.Transport must set DisableCompression: true to keep that;
+	// otherwise Go adds "Accept-Encoding: gzip" upstream and strips the
+	// Content-Encoding it decoded.
+	Transport http.RoundTripper
+	Logger    *slog.Logger // default: discards everything
+	Limits    Limits
+	Headers   HeaderNames
 	// MeasureSessionPrediction turns on the default SessionStrategy's
 	// accuracy harness: a call that carries a session header is also
 	// predicted, and /statusz counts whether the prediction agreed
