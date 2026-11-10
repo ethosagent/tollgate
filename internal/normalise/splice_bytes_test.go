@@ -1,6 +1,7 @@
 package normalise
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -48,6 +49,60 @@ func TestSplicer_RewritesOnlyTheIndexDigits(t *testing.T) {
 			out, keep := sp.Recovery(raw, ev, data)
 			if !keep || string(out) != tt.want {
 				t.Fatalf("keep=%v\n got %q\nwant %q", keep, out, tt.want)
+			}
+		})
+	}
+}
+
+// TestSplicer_FallsBackToReserialisingWhenTheIndexIsNotPatchable: when the
+// digits cannot be patched in place (data over several lines, an escaped key,
+// a negative or very long value) the index must still be shifted: a duplicate
+// index would merge two items for the client, which is worse than reordered keys.
+func TestSplicer_FallsBackToReserialisingWhenTheIndexIsNotPatchable(t *testing.T) {
+	tests := []struct {
+		name  string
+		wire  model.WireFormat
+		in    string
+		key   string
+		start int // the member's value in the recovery stream
+	}{
+		{"responses multi data line", model.WireOpenAIResponses,
+			"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\ndata: \"output_index\":0}\n\n", "output_index", 0},
+		{"responses escaped key", model.WireOpenAIResponses,
+			"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output\\u005findex\":0}\n\n", "output_index", 0},
+		{"responses negative", model.WireOpenAIResponses,
+			"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":-1}\n\n", "output_index", -1},
+		{"responses ten digits", model.WireOpenAIResponses,
+			"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":1234567890}\n\n", "output_index", 1234567890},
+		{"anthropic multi data line", model.WireAnthropicMessages,
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\ndata: \"index\":0}\n\n", "index", 0},
+		{"anthropic escaped key", model.WireAnthropicMessages,
+			"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"ind\\u0065x\":0}\n\n", "index", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			term, _ := TerminalFor(tt.wire)
+			sp := term.NewSplicer()
+			sp.Sent(map[model.WireFormat]string{model.WireOpenAIResponses: "response.output_item.added", model.WireAnthropicMessages: "content_block_start"}[tt.wire],
+				[]byte(map[model.WireFormat]string{model.WireOpenAIResponses: `{"output_index":2}`, model.WireAnthropicMessages: `{"index":2}`}[tt.wire]))
+			sp.Begin()
+			raw := []byte(tt.in)
+			ev, data := SplitFrame([]byte(strings.TrimRight(tt.in, "\r\n")))
+			out, keep := sp.Recovery(raw, ev, data)
+			if !keep {
+				t.Fatal("frame dropped")
+			}
+			ev2, data2 := SplitFrame([]byte(strings.TrimRight(string(out), "\r\n")))
+			dec := json.NewDecoder(strings.NewReader(string(data2)))
+			dec.UseNumber()
+			var any map[string]any
+			if err := dec.Decode(&any); err != nil {
+				t.Fatalf("out %q is not JSON: %v", out, err)
+			}
+			got, ok := any[tt.key].(json.Number)
+			want := int64(tt.start) + 3
+			if n, err := got.Int64(); !ok || err != nil || n != want {
+				t.Fatalf("%s = %v in %q, want %d (event %q)", tt.key, any[tt.key], out, want, ev2)
 			}
 		})
 	}

@@ -60,7 +60,7 @@ func (s *anthropicSplicer) Recovery(raw []byte, event string, data []byte) ([]by
 	case "message_start", "ping":
 		return nil, false
 	case "content_block_start", "content_block_delta", "content_block_stop":
-		return s.shift(raw, t, data), true
+		return s.shift(raw, event, t, data), true
 	}
 	return raw, true
 }
@@ -68,8 +68,8 @@ func (s *anthropicSplicer) Recovery(raw []byte, event string, data []byte) ([]by
 // shift rewrites the index of a content block frame by the recovery offset,
 // leaving every other byte as the upstream wrote it. A frame it cannot read is
 // passed on unchanged.
-func (s *anthropicSplicer) shift(raw []byte, typ string, data []byte) []byte {
-	out, idx, ok := shiftTopInt(raw, data, "index", s.offset)
+func (s *anthropicSplicer) shift(raw []byte, event, typ string, data []byte) []byte {
+	out, idx, ok := shiftIndex(raw, event, data, "index", s.offset)
 	if !ok {
 		return raw
 	}

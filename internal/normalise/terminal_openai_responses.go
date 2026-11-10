@@ -73,14 +73,14 @@ func (s *responsesSplicer) Sent(event string, data []byte) {
 }
 
 // Recovery shifts the output_index of a recovery frame by the offset and
-// changes nothing else in it (see shiftTopInt); a frame without one passes on
+// changes nothing else in it (see shiftIndex); a frame without one passes on
 // unchanged.
 func (s *responsesSplicer) Recovery(raw []byte, event string, data []byte) ([]byte, bool) {
 	if event == "response.created" || event == "response.in_progress" ||
 		bytes.HasPrefix(data, []byte(`{"type":"response.created"`)) || bytes.HasPrefix(data, []byte(`{"type":"response.in_progress"`)) {
 		return nil, false
 	}
-	out, idx, ok := shiftTopInt(raw, data, "output_index", s.offset)
+	out, idx, ok := shiftIndex(raw, event, data, "output_index", s.offset)
 	if !ok {
 		return raw, true
 	}

@@ -2,6 +2,7 @@ package normalise
 
 import (
 	"bytes"
+	"encoding/json"
 	"strconv"
 )
 
@@ -10,8 +11,11 @@ import (
 // is the frame's data payload, found verbatim inside raw. Every other byte of
 // raw is untouched (key order, spacing, escapes, "<>&", the event line and the
 // terminator), because a recovered frame reaches the client as written. ok is
-// false when raw does not hold data verbatim (multi-line data), the key is
-// absent at the top level, or its value is not a plain integer.
+// false when the digits cannot be patched in place: raw does not hold data
+// verbatim (multi-line data), the key is absent or written with escapes, or its
+// value is negative, longer than nine digits or not a plain integer. shiftIndex
+// then falls back to reserialiseInt, because a frame left at its old index is
+// worse than one with reordered keys.
 func shiftTopInt(raw, data []byte, key string, by int) (out []byte, val int, ok bool) {
 	base := bytes.Index(raw, data)
 	if base < 0 {
@@ -96,4 +100,41 @@ func endOfString(d []byte, i int) int {
 		j++
 	}
 	return j
+}
+
+// shiftIndex shifts the integer member key of a frame: in place when the
+// digits can be patched (shiftTopInt, every other byte kept), else by
+// reserialising the frame. ok is false only when the frame has no integer key.
+func shiftIndex(raw []byte, event string, data []byte, key string, by int) (out []byte, val int, ok bool) {
+	if out, val, ok = shiftTopInt(raw, data, key, by); ok {
+		return out, val, true
+	}
+	return reserialiseInt(event, data, key, by)
+}
+
+// reserialiseInt is the fallback: it decodes the frame's object, adds by to
+// key's integer and writes the frame again, in the event/data layout. Keys come
+// out alphabetised; "<", ">" and "&" are kept as written.
+func reserialiseInt(event string, data []byte, key string, by int) (out []byte, val int, ok bool) {
+	var m map[string]json.RawMessage
+	if json.Unmarshal(data, &m) != nil {
+		return nil, 0, false
+	}
+	if json.Unmarshal(m[key], &val) != nil {
+		return nil, 0, false
+	}
+	val += by
+	m[key] = json.RawMessage(strconv.Itoa(val))
+	var buf bytes.Buffer
+	if event != "" {
+		buf.WriteString("event: " + event + "\n")
+	}
+	buf.WriteString("data: ")
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(m) != nil { // Encode ends with "\n": the first half of the frame break
+		return nil, 0, false
+	}
+	buf.WriteByte('\n')
+	return buf.Bytes(), val, true
 }
