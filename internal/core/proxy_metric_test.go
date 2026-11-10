@@ -94,6 +94,9 @@ func TestProxy_OneMetricPerCall(t *testing.T) {
 			if tt.parsed && (m.Provider != "openai" || m.Model == "" || m.Usage.InputTokens == 0 || m.TTFB <= 0) {
 				t.Fatalf("metric = %+v, want provider, model, usage and TTFB", m)
 			}
+			if m.Dispatched != tt.touched {
+				t.Fatalf("Dispatched = %v, want %v (refusals before the upstream are false)", m.Dispatched, tt.touched)
+			}
 			if tt.touched {
 				eventually(t, "the upstream request", func() bool { return len(up.Requests()) > 0 })
 			} else if len(up.Requests()) != 0 {
@@ -124,5 +127,17 @@ func TestProxy_AfterSeesTheMetricOfARejectedCall(t *testing.T) {
 	eventually(t, "the sink Metric", func() bool { return len(rec.all()) == 1 })
 	if m.Status != 401 || m.Finish != model.FinishRejected || rec.all()[0] != m {
 		t.Fatalf("After got %+v, sink got %+v; want the same rejected Metric", m, rec.all())
+	}
+}
+
+// TestProxy_MetricDispatchedSignalsAnUpstreamAttempt: Dispatched separates a
+// call refused before the upstream (resolver, here) from one that reached it.
+func TestProxy_MetricDispatchedSignalsAnUpstreamAttempt(t *testing.T) {
+	up := newFakeUpstream(t, upstreamOptions{})
+	base, rec, _ := metricProxy(t, core.Options{})
+	_ = readAll(t, post(t, base, "/nope/x", []byte(`{}`), via(up)))
+	eventually(t, "the refused call's Metric", func() bool { return len(rec.all()) == 1 })
+	if m := rec.all()[0]; m.Dispatched || m.Finish != model.FinishRejected || m.Status != 404 {
+		t.Fatalf("resolver refusal metric = %+v, want rejected 404, not dispatched", m)
 	}
 }

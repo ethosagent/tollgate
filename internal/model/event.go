@@ -72,8 +72,16 @@ type Metric struct {
 	Stream    bool
 	Status    int
 	Finish    Finish
-	Usage     Usage
-	Start     time.Time
-	TTFB      time.Duration
-	Duration  time.Duration
+	// Dispatched is true once the proxy attempted the upstream request, so a
+	// transport failure, timeout or client cancel mid-flight still counts.
+	// It is false for a refusal before that point: authentication, admission,
+	// the provider resolver, the upstream target check, an unreadable or
+	// oversized request body, and a Before hook's short-circuit Response.
+	// Finish is unchanged; FinishRejected can be either (a Before hook may
+	// also reject), so hosts that must not bill a refusal test Dispatched.
+	Dispatched bool
+	Usage      Usage
+	Start      time.Time
+	TTFB       time.Duration
+	Duration   time.Duration
 }

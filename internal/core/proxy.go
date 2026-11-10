@@ -164,6 +164,7 @@ func (p *Proxy) relay(body http.ResponseWriter, r *http.Request, o *outcome, req
 	l := p.opts.Limits
 	req.Limits = forward.StreamLimits{FirstByte: l.FirstByteTimeout, Idle: l.IdleStreamTimeout, MaxCall: l.MaxCallDuration}
 	req.Shape = o.shape
+	o.dispatched = true
 	res, err := forward.Forward(r.Context(), p.opts.Transport, body, req)
 	if err != nil {
 		p.reject(o, model.StatusOf(err, http.StatusBadGateway))

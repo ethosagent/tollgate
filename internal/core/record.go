@@ -18,19 +18,20 @@ import (
 // values, bodies or credentials (PRIV-1, PRIV-2). The handler goroutine writes
 // it; once finishCall runs it is read-only, except tap, which guards itself.
 type outcome struct {
-	start    time.Time
-	callID   string
-	shape    normalise.ErrorShape // error body shape; refined once the provider is known
-	tenant   string
-	provider string
-	status   int
-	finish   model.Finish
-	chn      *chain.Chain         // the hooks of this call: later Use calls do not join it
-	call     *model.Call          // never nil: ID and Path at once, the rest as the pipeline learns it
-	w        *forward.TimedWriter // the client writer; its first write is the TTFB
-	usage    model.Usage          // stream:false usage, from the held body
-	tap      *chain.Tap           // stream:true usage (and OnEvent), nil when nobody needs it
-	final    *forward.Finalized   // what the Finalizer barrier did; its usage covers every upstream call
+	start      time.Time
+	callID     string
+	shape      normalise.ErrorShape // error body shape; refined once the provider is known
+	tenant     string
+	provider   string
+	status     int
+	finish     model.Finish
+	dispatched bool                 // relay ran: the upstream request was attempted
+	chn        *chain.Chain         // the hooks of this call: later Use calls do not join it
+	call       *model.Call          // never nil: ID and Path at once, the rest as the pipeline learns it
+	w          *forward.TimedWriter // the client writer; its first write is the TTFB
+	usage      model.Usage          // stream:false usage, from the held body
+	tap        *chain.Tap           // stream:true usage (and OnEvent), nil when nobody needs it
+	final      *forward.Finalized   // what the Finalizer barrier did; its usage covers every upstream call
 }
 
 func (p *Proxy) newOutcome(w http.ResponseWriter, r *http.Request) *outcome {
@@ -84,7 +85,7 @@ func (p *Proxy) wantsUsage(chn *chain.Chain) bool {
 func (o *outcome) metric(d time.Duration) model.Metric {
 	c := o.call
 	m := model.Metric{CallID: o.callID, TenantID: o.tenant, SessionID: c.Session.ID, Provider: o.provider,
-		Model: c.Model, Stream: c.Stream, Status: o.status, Finish: o.finish, Usage: o.usage,
+		Model: c.Model, Stream: c.Stream, Status: o.status, Finish: o.finish, Dispatched: o.dispatched, Usage: o.usage,
 		Start: o.start, Duration: d}
 	switch {
 	case o.final != nil: // the barrier saw every upstream response, discarded terminals included
