@@ -1,12 +1,14 @@
 package core_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/ethosagent/tollgate/internal/core"
+	"github.com/ethosagent/tollgate/internal/model"
 )
 
 // cutUpstream sends one whole SSE frame, then half of another, then drops the
@@ -84,5 +86,33 @@ func TestProxy_CutResponsesStreamGetsAResponsesErrorEvent(t *testing.T) {
 	}
 	if !strings.HasPrefix(frame, `{"code":"server_error","message":"upstream error","param":null,"type":"error"}`) {
 		t.Fatalf("error frame data = %q", frame)
+	}
+}
+
+// TestProxy_CutMidFrameOnTheHeldAndCopiedPaths: a stream:false call whose
+// upstream answers with an event stream goes through Capture (an OnResponse
+// hook) or BodyCopy (a usage reader). Both pass the stream straight on, and
+// the injected error event must still start on its own frame.
+func TestProxy_CutMidFrameOnTheHeldAndCopiedPaths(t *testing.T) {
+	onResp := &tHook{name: "obs", onResp: func(_ context.Context, _ *model.Call, r *model.Response) (*model.Response, error) { return r, nil }}
+	tests := []struct {
+		name  string
+		hooks []model.Hook
+	}{
+		{"capture (OnResponse hook)", []model.Hook{onResp}},
+		{"body copy (usage reader)", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			up := cutUpstream(t, "data: {\"choices\":[]}\n\n", `data: {"choices":[{"delta":{"con`)
+			base, _, _ := metricProxy(t, core.Options{}, tt.hooks...)
+			resp := post(t, base, "/openai/v1/chat/completions", []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`),
+				map[string]string{"x-upstream-url": up.URL})
+			got := string(readAllRaw(t, resp))
+			want := "data: {\"choices\":[]}\n\ndata: {\"choices\":[{\"delta\":{\"con\n\ndata: {\"error\":"
+			if !strings.HasPrefix(got, want) {
+				t.Fatalf("body = %q, want the error frame on its own after %q", got, want)
+			}
+		})
 	}
 }

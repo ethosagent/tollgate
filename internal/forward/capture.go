@@ -119,6 +119,16 @@ func (c *Capture) pass(reason string) error {
 	return err
 }
 
+// FrameBreak is the break that closes the SSE frame the client is in, asked of
+// the writer behind a passed (streamed) response; "" while the body is held,
+// since nothing has reached the client.
+func (c *Capture) FrameBreak() string {
+	if !c.passed {
+		return ""
+	}
+	return frameBreakOf(c.dst)
+}
+
 // Started reports whether the response head was written.
 func (c *Capture) Started() bool { return c.started }
 

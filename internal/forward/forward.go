@@ -202,12 +202,28 @@ func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape,
 	}
 	status := normalise.FinishStatus(f)
 	var ev []byte
-	if fb, ok := w.(interface{ FrameBreak() string }); ok {
-		ev = append(ev, fb.FrameBreak()...) // end a half-written frame first
-	}
+	ev = append(ev, frameBreakOf(w)...) // end a half-written frame first
 	ev = normalise.AppendErrorEvent(ev, shape, status, normalise.StatusMessage(status))
 	_, _ = writeFlush(w, http.NewResponseController(w), ev) // the client may be gone; the call is ending anyway
 	return true
+}
+
+// frameBreakOf asks the writer chain for the break that closes the SSE frame
+// the client is in the middle of: the first writer that tracks it (the
+// TimedWriter) answers, found through Capture and through Unwrap (BodyCopy).
+// "" when none does.
+func frameBreakOf(w http.ResponseWriter) string {
+	for w != nil {
+		if fb, ok := w.(interface{ FrameBreak() string }); ok {
+			return fb.FrameBreak()
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			return ""
+		}
+		w = u.Unwrap()
+	}
+	return ""
 }
 
 // lengthDeclared reports whether h declares the body's length. The relayed
