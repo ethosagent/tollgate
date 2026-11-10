@@ -150,23 +150,30 @@ func (m *responsesMapper) Frame(event string, data []byte) ([]model.Event, error
 
 // cannotMap drops an output_item frame whose item type the mapper ignores
 // without decoding it: added matters only for function_call, done only for
-// custom_tool_call and local_shell_call. The type name must appear in the
-// frame to be read, so a miss here is a miss in the decode too; a false hit
-// (the name inside text) just decodes. Only a named event is judged.
+// custom_tool_call and local_shell_call. A type name written plainly must
+// appear in the frame as `"name"`, so its absence proves the type is another
+// one; a false hit (the name inside text) just decodes. A name can also be
+// written with JSON escapes ("function\u005fcall"), which the byte check cannot
+// see, so a frame holding any \u escape is never judged: it is decoded, as
+// every frame was before this pre-check. Only a named event is judged.
 func cannotMap(event string, data []byte) bool {
+	var plain bool
 	switch event {
 	case "response.output_item.added":
-		return !bytes.Contains(data, itemFunctionCall)
+		plain = bytes.Contains(data, itemFunctionCall)
 	case "response.output_item.done":
-		return !bytes.Contains(data, itemCustomTool) && !bytes.Contains(data, itemLocalShell)
+		plain = bytes.Contains(data, itemCustomTool) || bytes.Contains(data, itemLocalShell)
+	default:
+		return false
 	}
-	return false
+	return !plain && !bytes.Contains(data, jsonUnicodeEscape)
 }
 
 var (
-	itemFunctionCall = []byte(`"function_call"`)
-	itemCustomTool   = []byte(`"custom_tool_call"`)
-	itemLocalShell   = []byte(`"local_shell_call"`)
+	itemFunctionCall  = []byte(`"function_call"`)
+	itemCustomTool    = []byte(`"custom_tool_call"`)
+	itemLocalShell    = []byte(`"local_shell_call"`)
+	jsonUnicodeEscape = []byte(`\u`)
 )
 
 func (m *responsesMapper) dispatch() []model.Event {

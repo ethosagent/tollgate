@@ -429,3 +429,27 @@ func TestResponsesMapper_DoesNotDecodeFramesItCannotUse(t *testing.T) {
 		t.Fatalf("decoded %d frames, want 3 (two deltas, completed)", n)
 	}
 }
+
+// TestResponsesMapper_EscapedItemTypeStillMaps: the byte pre-check of
+// output_item frames must not drop a frame whose item type is written with
+// JSON escapes ("function_call"): the old decode-everything code mapped it.
+func TestResponsesMapper_EscapedItemTypeStillMaps(t *testing.T) {
+	tests := []struct {
+		name, event, data string
+		wantName          string
+	}{
+		{"added, escaped type", "response.output_item.added",
+			`{"type":"response.output_item.added","output_index":0,"item":{"type":"function\u005fcall","call_id":"c1","name":"get_weather"}}`, "get_weather"},
+		{"done, escaped custom tool", "response.output_item.done",
+			`{"type":"response.output_item.done","output_index":0,"item":{"type":"custom\u005ftool\u005fcall","call_id":"c2","name":"apply_patch","input":"*** patch"}}`, "apply_patch"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, _ := ForWire(model.WireOpenAIResponses)
+			evs, err := w.NewEventMapper().Frame(tt.event, []byte(tt.data))
+			if err != nil || len(evs) != 1 || evs[0].ToolCall == nil || evs[0].ToolCall.Name != tt.wantName {
+				t.Fatalf("events = %+v err %v, want one tool call %q", evs, err, tt.wantName)
+			}
+		})
+	}
+}
