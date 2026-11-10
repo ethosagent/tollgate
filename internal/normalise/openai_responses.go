@@ -1,6 +1,7 @@
 package normalise
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -137,7 +138,7 @@ func skipsResponsesEvent(event string) bool {
 // the SSE event name only lets boring events skip the decode. Unknown types
 // (future events, tool-specific progress) yield nothing.
 func (m *responsesMapper) Frame(event string, data []byte) ([]model.Event, error) {
-	if len(data) == 0 || string(data) == "[DONE]" || skipsResponsesEvent(event) {
+	if len(data) == 0 || string(data) == "[DONE]" || skipsResponsesEvent(event) || cannotMap(event, data) {
 		return nil, nil
 	}
 	m.ev = orEvent{}
@@ -146,6 +147,27 @@ func (m *responsesMapper) Frame(event string, data []byte) ([]model.Event, error
 	}
 	return m.state.observe(m.dispatch()), nil
 }
+
+// cannotMap drops an output_item frame whose item type the mapper ignores
+// without decoding it: added matters only for function_call, done only for
+// custom_tool_call and local_shell_call. The type name must appear in the
+// frame to be read, so a miss here is a miss in the decode too; a false hit
+// (the name inside text) just decodes. Only a named event is judged.
+func cannotMap(event string, data []byte) bool {
+	switch event {
+	case "response.output_item.added":
+		return !bytes.Contains(data, itemFunctionCall)
+	case "response.output_item.done":
+		return !bytes.Contains(data, itemCustomTool) && !bytes.Contains(data, itemLocalShell)
+	}
+	return false
+}
+
+var (
+	itemFunctionCall = []byte(`"function_call"`)
+	itemCustomTool   = []byte(`"custom_tool_call"`)
+	itemLocalShell   = []byte(`"local_shell_call"`)
+)
 
 func (m *responsesMapper) dispatch() []model.Event {
 	e := &m.ev

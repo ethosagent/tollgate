@@ -409,3 +409,23 @@ func TestSplicer_ResponsesOneResponseFromTwoStreams(t *testing.T) {
 }
 
 func FuzzResponsesEvents(f *testing.F) { runFuzz(f, model.WireOpenAIResponses, "openai/responses") }
+
+// TestResponsesMapper_DoesNotDecodeFramesItCannotUse: an output_item frame of
+// a message or reasoning item maps to nothing, so it is dropped before the
+// decode. The text stream decodes only its two deltas and the terminal frame.
+func TestResponsesMapper_DoesNotDecodeFramesItCannotUse(t *testing.T) {
+	var n int
+	decodeObserver = func() { n++ }
+	t.Cleanup(func() { decodeObserver = nil })
+	w, _ := ForWire(model.WireOpenAIResponses)
+	m := w.NewEventMapper()
+	for _, f := range fixtures.Chunks("openai/responses-stream-text") {
+		ev, data := SplitFrame(f)
+		if _, err := m.Frame(ev, data); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n != 3 {
+		t.Fatalf("decoded %d frames, want 3 (two deltas, completed)", n)
+	}
+}
