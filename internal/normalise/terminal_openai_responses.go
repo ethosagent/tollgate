@@ -58,10 +58,14 @@ type responsesSplicer struct {
 	offset int // added to the current recovery's indexes
 }
 
+var outputItemAdded = []byte("output_item.added")
+
 func (s *responsesSplicer) Begin() { s.offset = s.next }
 
 func (s *responsesSplicer) Sent(event string, data []byte) {
-	if event != "response.output_item.added" && !bytes.HasPrefix(data, []byte(`{"type":"response.output_item.added"`)) {
+	// Cheap filter first (Sent sees every frame the client gets), then the
+	// decoded type, so spacing or key order added by a gateway does not matter.
+	if event != "response.output_item.added" && (event != "" || !bytes.Contains(data, outputItemAdded) || responsesType("", data) != "response.output_item.added") {
 		return
 	}
 	var e struct {
@@ -76,8 +80,8 @@ func (s *responsesSplicer) Sent(event string, data []byte) {
 // changes nothing else in it (see shiftIndex); a frame without one passes on
 // unchanged.
 func (s *responsesSplicer) Recovery(raw []byte, event string, data []byte) ([]byte, bool) {
-	if event == "response.created" || event == "response.in_progress" ||
-		bytes.HasPrefix(data, []byte(`{"type":"response.created"`)) || bytes.HasPrefix(data, []byte(`{"type":"response.in_progress"`)) {
+	switch responsesType(event, data) {
+	case "response.created", "response.in_progress":
 		return nil, false
 	}
 	out, idx, ok := shiftIndex(raw, event, data, "output_index", s.offset)

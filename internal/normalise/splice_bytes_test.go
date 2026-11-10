@@ -107,3 +107,36 @@ func TestSplicer_FallsBackToReserialisingWhenTheIndexIsNotPatchable(t *testing.T
 		})
 	}
 }
+
+// TestResponsesSplicer_DataOnlyFramesWithSpacing: without event lines the
+// splicer reads the JSON type, whatever spacing a gateway added, so a second
+// response.created never reaches the client and a spaced output_item.added
+// still moves the next index.
+func TestResponsesSplicer_DataOnlyFramesWithSpacing(t *testing.T) {
+	term, _ := TerminalFor(model.WireOpenAIResponses)
+	sp := term.NewSplicer()
+	sp.Sent("", []byte(`{ "type" : "response.output_item.added", "output_index" : 4 }`))
+	sp.Begin()
+	for _, d := range []string{
+		`{ "type" : "response.created", "response" : {} }`,
+		"{\n  \"response\": {},\n  \"type\": \"response.in_progress\"\n}",
+	} {
+		raw := []byte("data: " + strings.ReplaceAll(d, "\n", " ") + "\n\n")
+		_, data := SplitFrame(raw)
+		if _, keep := sp.Recovery(raw, "", data); keep {
+			t.Fatalf("recovery frame %q was let through", d)
+		}
+	}
+	raw := []byte(`data: { "output_index" : 0 , "type" : "response.output_item.added" }` + "\n\n")
+	_, data := SplitFrame(raw)
+	out, keep := sp.Recovery(raw, "", data)
+	if !keep || string(out) != `data: { "output_index" : 5 , "type" : "response.output_item.added" }`+"\n\n" {
+		t.Fatalf("keep=%v out=%q, want index 5 (after the 5 items already sent)", keep, out)
+	}
+	sp.Begin()
+	raw = []byte(`data: {"type":"response.output_text.delta","output_index":0}` + "\n\n")
+	_, data = SplitFrame(raw)
+	if out, _ := sp.Recovery(raw, "", data); !strings.Contains(string(out), `"output_index":6`) {
+		t.Fatalf("second recovery = %q, want index 6: the spaced added frame must count", out)
+	}
+}
