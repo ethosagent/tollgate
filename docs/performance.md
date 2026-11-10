@@ -185,16 +185,16 @@ Then:
 
 ## Responses wire parse cost (plan 08 target NOT met)
 
-`go test -run '^$' -bench 'EventMapper/openai|ParseRequest/openai|Transcript' -count 8 ./internal/normalise` (medians, M1 Pro, loaded):
-
-| Benchmark | chat | Responses | Ratio | Responses before |
+`go test -run '^$' -bench 'Transcript|EventMapper/openai|ParseRequest/openai' -benchtime 2000x -count 10 ./internal/normalise`
+(medians, M1 Pro under load; "before" is 3d1ab64 in a worktree, same command):
+| Benchmark | chat | Responses before | Responses after | Ratio after (before) |
 |---|---:|---:|---:|---:|
-| ParseRequest, tools fixture (362 vs 897 B) | 2042 ns | 7295 ns | 3.6x | 9402 ns (4.6x) |
-| ParseTranscript, 100 like-for-like turns (33 vs 35 KB) | 229 us | 327-363 us | 1.4-1.6x | about 2.0x |
-| EventMapper, text stream (953 vs 3746 B) | 5814 ns | 7346 ns | 1.26x | 8500 ns (1.6x) |
-| EventMapper, tool stream | 6872 ns | 8462 ns | 1.23x | 9002 ns |
+| ParseRequest, tools fixture (362 vs 897 B) | 1958 ns | 8249 ns | 6762 ns | 3.45x (4.2x) |
+| ParseTranscript, 100 like-for-like turns (33 vs 35 KB) | 219.9 us | 395.3 us | 330.4 us | 1.50x (1.83x) |
+| EventMapper, text stream (953 vs 3746 B) | 5022 ns | 8094 ns | 6556 ns | 1.31x (1.65x) |
+| EventMapper, tool stream | 6426 ns | 7898 ns | 7504 ns | 1.17x (1.25x) |
 
 "Within 10% of chat" is not met. Remaining cause: the fixtures carry 2.5x to 4x the bytes
 (echoed response objects, tool schemas); validating JSON alone is about 3 ns/B (2.7 us for
-the tools request before any field is read); each item has more fields than a chat message. Closing the rest needs a hand-written scanner in place of
-encoding/json, not worth its risk: microseconds beside an LLM call, chat unchanged.
+the tools request before any field is read); each item has more fields than a chat message.
+Closing the rest needs a hand-written scanner in place of encoding/json, not worth its risk: microseconds beside an LLM call, chat unchanged.
