@@ -168,6 +168,8 @@ func WriteResponse(w http.ResponseWriter, r *model.Response) {
 type TimedWriter struct {
 	http.ResponseWriter
 	first time.Time
+	tail  [4]byte // the last bytes written, oldest first, for FrameBreak
+	nTail int
 }
 
 // NewTimedWriter wraps w.
@@ -178,7 +180,49 @@ func (t *TimedWriter) Write(p []byte) (int, error) {
 	if t.first.IsZero() && len(p) > 0 {
 		t.first = time.Now()
 	}
-	return t.ResponseWriter.Write(p)
+	n, err := t.ResponseWriter.Write(p)
+	t.remember(p[:n])
+	return n, err
+}
+
+// remember keeps the last four bytes written: enough to tell whether the
+// body stands at an SSE frame break.
+func (t *TimedWriter) remember(p []byte) {
+	if len(p) >= len(t.tail) {
+		copy(t.tail[:], p[len(p)-len(t.tail):])
+		t.nTail = len(t.tail)
+		return
+	}
+	keep := min(t.nTail, len(t.tail)-len(p)) // the newest old bytes that still fit
+	copy(t.tail[:], t.tail[t.nTail-keep:t.nTail])
+	t.nTail = keep + copy(t.tail[keep:], p)
+}
+
+// FrameBreak returns what must be written to end the SSE frame the body
+// stands in: "" at a frame break (or before any byte), "\n" after a complete
+// line, "\n\n" in the middle of a line. A line ends at "\n" (a "\r" before it is
+// ignored); a frame ends at two line ends in a row.
+func (t *TimedWriter) FrameBreak() string {
+	ends := 0
+	for i := t.nTail - 1; i >= 0 && ends < 2; i-- {
+		switch t.tail[i] {
+		case '\r':
+		case '\n':
+			ends++
+		default:
+			if ends == 0 {
+				return "\n\n" // mid-line
+			}
+			return "\n" // one complete line, no blank line yet
+		}
+	}
+	switch {
+	case t.nTail == 0 || ends == 2:
+		return ""
+	case ends == 1: // the window ends at the line's only visible break
+		return "\n"
+	}
+	return "\n\n"
 }
 
 // Unwrap lets http.ResponseController reach the wrapped writer.

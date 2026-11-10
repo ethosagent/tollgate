@@ -114,3 +114,35 @@ func TestTimedWriter_RecordsFirstByteAndStillFlushes(t *testing.T) {
 		t.Fatalf("Flush through the wrapper: err=%v flushed=%v", err, rec.Flushed)
 	}
 }
+
+func TestTimedWriter_FrameBreak(t *testing.T) {
+	tests := []struct {
+		name   string
+		writes []string
+		want   string
+	}{
+		{"nothing written", nil, ""},
+		{"whole frame", []string{"data: x\n\n"}, ""},
+		{"crlf frame", []string{"data: x\r\n\r\n"}, ""},
+		{"line, no blank line", []string{"data: x\n"}, "\n"},
+		{"crlf line, no blank line", []string{"data: x\r\n"}, "\n"},
+		{"mid line", []string{"data: x\n\ndata: {\"a"}, "\n\n"},
+		{"frame split over byte writes", []string{"d", "a", "\n", "\n"}, ""},
+		{"line split over byte writes", []string{"d", "a", "\n"}, "\n"},
+		{"mid line after a frame, byte writes", []string{"\n", "\n", "x"}, "\n\n"},
+		{"long then short writes", []string{"data: xxxxxxxx\n\n", "e", "\n"}, "\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tw := NewTimedWriter(httptest.NewRecorder())
+			for _, w := range tt.writes {
+				if _, err := tw.Write([]byte(w)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if got := tw.FrameBreak(); got != tt.want {
+				t.Fatalf("FrameBreak = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}

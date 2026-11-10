@@ -201,7 +201,11 @@ func terminate(w http.ResponseWriter, h http.Header, shape normalise.ErrorShape,
 		return false
 	}
 	status := normalise.FinishStatus(f)
-	ev := normalise.AppendErrorEvent(nil, shape, status, normalise.StatusMessage(status))
+	var ev []byte
+	if fb, ok := w.(interface{ FrameBreak() string }); ok {
+		ev = append(ev, fb.FrameBreak()...) // end a half-written frame first
+	}
+	ev = normalise.AppendErrorEvent(ev, shape, status, normalise.StatusMessage(status))
 	_, _ = writeFlush(w, http.NewResponseController(w), ev) // the client may be gone; the call is ending anyway
 	return true
 }
