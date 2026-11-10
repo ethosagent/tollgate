@@ -77,6 +77,8 @@ type Metric struct {
 	// It is false for a refusal before that point: authentication, admission,
 	// the provider resolver, the upstream target check, an unreadable or
 	// oversized request body, and a Before hook's short-circuit Response.
+	// The flag is set just before the dial, so a connection that is refused
+	// (a 502 with no byte sent) still reads true.
 	// Finish is unchanged; FinishRejected can be either (a Before hook may
 	// also reject), so hosts that must not bill a refusal test Dispatched.
 	Dispatched bool

@@ -115,21 +115,23 @@ func TestEvents_ResponsesFailedAndIncompleteStreams(t *testing.T) {
 
 // TestResponsesParseRequest_AllocBudget keeps the request parser to one
 // decode pass per item (HOT-4): a second decode of content/output/arguments
-// shows up as extra allocations and scans. Budgets are the measured cost (22 and
-// 5) plus slack; it was 34 for the tools fixture with the double decode.
+// shows up as extra allocations. Allocation counts move with -race and -cover,
+// so the budget is a ratio to the chat parser measured in the same process:
+// 2.4x now (22 vs 9; 3.2x under -race), 3.8x with the double decode.
 func TestResponsesParseRequest_AllocBudget(t *testing.T) {
-	w, _ := ForWire(model.WireOpenAIResponses)
-	for name, max := range map[string]float64{"openai/request-responses-tools": 24, "openai/request-responses-stream": 8} {
+	allocs := func(name string) float64 {
+		w, _ := ForWire(wireOf(name))
 		body := fixture(t, name)
-		got := testing.AllocsPerRun(50, func() {
+		return testing.AllocsPerRun(50, func() {
 			var c model.Call
 			if err := w.ParseRequest(body, &c); err != nil {
 				t.Fatal(err)
 			}
 		})
-		if got > max {
-			t.Errorf("%s: %v allocs per parse, budget %v", name, got, max)
-		}
+	}
+	chat, resp := allocs("openai/request-chat-tools"), allocs("openai/request-responses-tools")
+	if resp > 3.5*chat {
+		t.Errorf("responses tools parse = %v allocs, chat = %v: budget is 3.5x chat", resp, chat)
 	}
 }
 

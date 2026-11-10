@@ -54,8 +54,23 @@ All notable changes to tollgate. The format follows
   `stop` / `tool_calls`. A turn that ends in a tool call reports `completed`;
   read `StreamSummary.ToolCalls`.
 
+### Fixed
+
+- A stream cut mid-frame now gets the break that closes the open frame before the
+  injected error event, instead of a garbled frame.
+- A Responses stream's injected error is `event: error` with
+  `{"type":"error","code","message","param"}`, as the API sends it (JSON error
+  bodies keep the OpenAI shape). `sequence_number` is omitted.
+- A Before hook that sets `Call.Meta` to nil leaves `After` an empty map.
+- The Responses request parser decodes each item once (tools fixture 9.4 to
+  7.3 us); the mapper skips output_item frames it cannot map.
+
 ### Known limitations
 
+- `/backend-api/codex/responses` (Codex signed in with ChatGPT) and Azure
+  `/openai/deployments/*/responses` are not chosen as the Responses wire; they
+  stay on the chat wire.
+- `Metric.Dispatched` is true for a refused connection (set before the dial).
 - Built-in tool items (web search, computer use, tool search, MCP), refusals
   and non-text parts are forwarded byte for byte but not normalised;
   `/v1/responses/compact` stays unparsed.

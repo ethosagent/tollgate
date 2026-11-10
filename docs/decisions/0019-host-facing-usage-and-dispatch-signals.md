@@ -30,7 +30,8 @@ Four gaps showed up when a host costs and audits calls from tollgate's `Metric`.
 2. `model.Metric` gains `Dispatched bool`: true once the proxy attempted the
    upstream request (transport errors, timeouts and client cancels mid-flight
    included), false for auth, admission, resolver, target-check and
-   body-read refusals and for a Before hook's short-circuit Response.
+   body-read refusals and for a Before hook's short-circuit Response. It is set
+   just before the dial, so a refused connection still reads true.
    Alternative rejected: a new `Finish` value, because adding or splitting a
    value breaks consumers that switch on `Finish` and loses the reason
    (`FinishUpstreamError` vs refused) the other way round.

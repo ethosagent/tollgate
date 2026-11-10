@@ -183,18 +183,18 @@ Then:
 | `cb2da6d` | relay reads start at 4 KiB, 32 KiB on bulk | ~30 KB less per open stream |
 | `cd4e54b` | frame queue ring grows with the backlog, bounded by frames and bytes | was the top allocation (21.7 MB / 1000 calls) |
 
-## Responses wire parse cost (WAIVED against plan 08)
+## Responses wire parse cost (plan 08 target NOT met)
 
-`go test -run '^$' -bench 'EventMapper/openai|ParseRequest/openai' -benchmem -count 6 ./internal/normalise`
-(medians, M1 Pro, hand-authored fixtures; the verification run, same process):
+`go test -run '^$' -bench 'EventMapper/openai|ParseRequest/openai|Transcript' -count 8 ./internal/normalise` (medians, M1 Pro, loaded):
 
-| Benchmark | chat | Responses | Ratio |
-|---|---:|---:|---:|
-| EventMapper, text stream (6 vs 10 frames, 953 vs 3746 B) | 5227 ns | 7155 ns | 1.37x |
-| EventMapper, tool stream | 6619 ns | 7166 ns | 1.08x |
-| ParseRequest, tools fixture (362 vs 897 B, 5 items) | 2008 ns | 6893 ns | 3.4x |
+| Benchmark | chat | Responses | Ratio | Responses before |
+|---|---:|---:|---:|---:|
+| ParseRequest, tools fixture (362 vs 897 B) | 2042 ns | 7295 ns | 3.6x | 9402 ns (4.6x) |
+| ParseTranscript, 100 like-for-like turns (33 vs 35 KB) | 229 us | 327-363 us | 1.4-1.6x | about 2.0x |
+| EventMapper, text stream (953 vs 3746 B) | 5814 ns | 7346 ns | 1.26x | 8500 ns (1.6x) |
+| EventMapper, tool stream | 6872 ns | 8462 ns | 1.23x | 9002 ns |
 
-"Within 10% of chat" is NOT met per stream or per request; it holds only per frame,
-which is flattered because many frames are skipped by name. Waived: Responses carries
-more frames and bytes, the cost is microseconds beside an LLM call, and chat code is
-unchanged. A rerun after decoding `output_item.done`: text 8303 vs 4972 ns, tools fixture 8702 vs 2115 ns.
+"Within 10% of chat" is not met. Remaining cause: the fixtures carry 2.5x to 4x the bytes
+(echoed response objects, tool schemas); validating JSON alone is about 3 ns/B (2.7 us for
+the tools request before any field is read); each item has more fields than a chat message. Closing the rest needs a hand-written scanner in place of
+encoding/json, not worth its risk: microseconds beside an LLM call, chat unchanged.
