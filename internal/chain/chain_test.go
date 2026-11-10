@@ -281,3 +281,36 @@ func TestBefore_ShortCircuitAdoptsMetaAndNamesTheHook(t *testing.T) {
 		t.Fatalf("by = %q with no short-circuit", by)
 	}
 }
+
+// A hook that sets Meta to nil must not leave later stages a nil map to write
+// to: a Meta the call had stays a (possibly empty) map, for a short-circuiting
+// hook and for one that lets the call through.
+func TestBefore_NilingMetaLeavesAnEmptyMap(t *testing.T) {
+	log, _ := newLogger()
+	nilMeta := func(resp *model.Response) func(context.Context, *model.Call) (*model.Response, error) {
+		return func(_ context.Context, c *model.Call) (*model.Response, error) {
+			c.Meta = nil
+			return resp, nil
+		}
+	}
+	for name, resp := range map[string]*model.Response{"short-circuit": {Status: 429}, "pass": nil} {
+		t.Run(name, func(t *testing.T) {
+			ch := New([]model.Hook{&hook{name: "wipe", before: nilMeta(resp)}}, log, testLimits)
+			call := newCall("x")
+			call.Meta = map[string]any{"k": 1}
+			ch.Before(context.Background(), call)
+			if call.Meta == nil {
+				t.Fatal("Meta is nil after the hook nilled it")
+			}
+			call.Meta["after-can-write"] = true // must not panic
+		})
+	}
+	t.Run("a call without Meta stays without", func(t *testing.T) {
+		ch := New([]model.Hook{&hook{name: "noop", before: func(context.Context, *model.Call) (*model.Response, error) { return nil, nil }}}, log, testLimits)
+		call := newCall("x")
+		ch.Before(context.Background(), call)
+		if call.Meta != nil {
+			t.Fatalf("Meta = %v, want nil (no allocation on the fast path)", call.Meta)
+		}
+	})
+}

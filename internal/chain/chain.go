@@ -85,7 +85,8 @@ func (c *Chain) Has(s Stage) bool { return len(c.by[s]) > 0 }
 // without error or panic, so a failed hook, or a cancelled one that returns
 // late, cannot change the call. A hook that returns a Response ends the chain
 // and that Response is returned: the upstream is never called. Of that hook's
-// copy only Meta is adopted, so what it recorded reaches After. Each hook gets
+// copy only Meta is adopted, so what it recorded reaches After. A
+// Meta the call had never comes back nil, even if a hook set it to nil. Each hook gets
 // Limits.Hook, all of them Limits.Total. A failing hook is logged and skipped.
 func (c *Chain) Before(ctx context.Context, call *model.Call) *model.Response {
 	resp, _ := c.BeforeNamed(ctx, call)
@@ -113,13 +114,17 @@ func (c *Chain) BeforeNamed(ctx context.Context, call *model.Call) (resp *model.
 			}
 		},
 		func(o out) bool {
+			had := call.Meta != nil
 			if o.resp != nil {
 				resp, by = o.resp, o.by
 				call.Meta = o.call.Meta
-				return true
+			} else {
+				*call = o.call
 			}
-			*call = o.call
-			return false
+			if had && call.Meta == nil {
+				call.Meta = map[string]any{} // a hook nilled it; After still gets a map
+			}
+			return o.resp != nil
 		})
 	return resp, by
 }
