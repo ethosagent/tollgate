@@ -243,5 +243,6 @@ func (r *finalRun) segment(src io.Reader, recovery bool) (res segResult) {
 
 func addUsage(a, b model.Usage) model.Usage {
 	return model.Usage{InputTokens: a.InputTokens + b.InputTokens, OutputTokens: a.OutputTokens + b.OutputTokens,
-		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens, ReasoningTokens: a.ReasoningTokens + b.ReasoningTokens}
+		CachedInputTokens: a.CachedInputTokens + b.CachedInputTokens, ReasoningTokens: a.ReasoningTokens + b.ReasoningTokens,
+		CacheWriteInputTokens: a.CacheWriteInputTokens + b.CacheWriteInputTokens}
 }

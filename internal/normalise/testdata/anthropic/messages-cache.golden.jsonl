@@ -1,0 +1,3 @@
+{"kind":"text","text":"Hello"}
+{"kind":"finish","finish":"end_turn"}
+{"kind":"usage","usage":{"InputTokens":12,"OutputTokens":2,"CachedInputTokens":300,"ReasoningTokens":0,"CacheWriteInputTokens":2048}}

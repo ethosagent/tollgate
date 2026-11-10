@@ -33,6 +33,7 @@ type anUsage struct {
 	InputTokens          optInt `json:"input_tokens"`
 	OutputTokens         optInt `json:"output_tokens"`
 	CacheReadInputTokens optInt `json:"cache_read_input_tokens"`
+	CacheCreationTokens  optInt `json:"cache_creation_input_tokens"`
 }
 
 // mergeUsage overlays the fields present in u onto base. Present zeros count.
@@ -45,6 +46,9 @@ func mergeUsage(base model.Usage, u *anUsage) model.Usage {
 	}
 	if u.CacheReadInputTokens.set {
 		base.CachedInputTokens = u.CacheReadInputTokens.v
+	}
+	if u.CacheCreationTokens.set {
+		base.CacheWriteInputTokens = u.CacheCreationTokens.v
 	}
 	return base
 }

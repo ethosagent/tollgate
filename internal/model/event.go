@@ -32,6 +32,11 @@ type Usage struct {
 	OutputTokens      int64
 	CachedInputTokens int64
 	ReasoningTokens   int64
+	// CacheWriteInputTokens counts prompt tokens written to the provider's
+	// prompt cache (Anthropic cache_creation_input_tokens). Anthropic bills
+	// these at a premium and excludes them from InputTokens. Zero on the
+	// OpenAI wires, which do not report cache writes.
+	CacheWriteInputTokens int64 `json:",omitempty"`
 }
 
 // Event is one parsed streaming chunk in the neutral model.
