@@ -71,3 +71,18 @@ func TestProxy_CutMidFrameTerminatesThePartialFrame(t *testing.T) {
 		})
 	}
 }
+
+// TestProxy_CutResponsesStreamGetsAResponsesErrorEvent: the in-band error on
+// a Responses stream is the typed "event: error" the API sends, which Codex
+// and the SDKs parse; chat keeps its bare data frame.
+func TestProxy_CutResponsesStreamGetsAResponsesErrorEvent(t *testing.T) {
+	up := cutUpstream(t, "event: response.created\ndata: {}\n\n", "event: response.output_text.delta\ndata: {\"type\":\"resp")
+	got := cutBody(t, "/openai/v1/responses", up)
+	_, frame, ok := strings.Cut(got, "\n\nevent: error\ndata: ")
+	if !ok {
+		t.Fatalf("body = %q, want an event: error frame", got)
+	}
+	if !strings.HasPrefix(frame, `{"code":"server_error","message":"upstream error","param":null,"type":"error"}`) {
+		t.Fatalf("error frame data = %q", frame)
+	}
+}

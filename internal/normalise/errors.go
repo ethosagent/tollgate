@@ -16,15 +16,20 @@ const (
 	ShapeGeneric ErrorShape = iota
 	ShapeOpenAI
 	ShapeAnthropic
+	// ShapeOpenAIResponses is ShapeOpenAI for JSON bodies; its in-band stream
+	// error is the typed "event: error" document the Responses API sends.
+	ShapeOpenAIResponses
 )
 
-// ShapeForWire picks the error shape for a wire format: OpenAI chat and
-// Responses get the OpenAI shape, Anthropic messages the Anthropic shape, anything else the
+// ShapeForWire picks the error shape for a wire format: OpenAI chat gets
+// the OpenAI shape, Responses its own variant, Anthropic messages the Anthropic shape, anything else the
 // generic one.
 func ShapeForWire(w model.WireFormat) ErrorShape {
 	switch w {
-	case model.WireOpenAIChat, model.WireOpenAIResponses:
+	case model.WireOpenAIChat:
 		return ShapeOpenAI
+	case model.WireOpenAIResponses:
+		return ShapeOpenAIResponses
 	case model.WireAnthropicMessages:
 		return ShapeAnthropic
 	}
@@ -109,7 +114,7 @@ func errorBody(shape ErrorShape, status int, msg string) any {
 			"type":  "error",
 			"error": map[string]string{"type": errorType(shape, status), "message": msg},
 		}
-	case ShapeOpenAI:
+	case ShapeOpenAI, ShapeOpenAIResponses:
 		return map[string]any{
 			"error": map[string]any{"message": msg, "type": errorType(shape, status), "param": nil, "code": nil},
 		}
@@ -131,10 +136,16 @@ func WriteError(w http.ResponseWriter, shape ErrorShape, status int, msg string)
 
 // AppendErrorEvent appends one SSE frame carrying an error to dst, for a
 // stream that has already started and so cannot change its status. Anthropic
-// streams get an "event: error" frame; the others a bare data frame holding
+// and Responses streams get an "event: error" frame; the others a bare data frame holding
 // the same JSON document WriteError would send. status picks the error type
 // exactly as in WriteError.
 func AppendErrorEvent(dst []byte, shape ErrorShape, status int, msg string) []byte {
+	if shape == ShapeOpenAIResponses {
+		doc, _ := json.Marshal(map[string]any{"type": "error", "code": errorType(shape, status), "message": msg, "param": nil})
+		dst = append(dst, "event: error\ndata: "...)
+		dst = append(dst, doc...)
+		return append(dst, "\n\n"...)
+	}
 	doc, _ := json.Marshal(errorBody(shape, status, msg)) // maps of strings and nil cannot fail
 	if shape == ShapeAnthropic {
 		dst = append(dst, "event: error\n"...)

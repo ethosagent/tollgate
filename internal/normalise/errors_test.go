@@ -11,7 +11,7 @@ import (
 func TestShapeForWire(t *testing.T) {
 	for wire, want := range map[model.WireFormat]ErrorShape{
 		model.WireOpenAIChat:        ShapeOpenAI,
-		model.WireOpenAIResponses:   ShapeOpenAI,
+		model.WireOpenAIResponses:   ShapeOpenAIResponses,
 		model.WireAnthropicMessages: ShapeAnthropic,
 		model.WirePassthrough:       ShapeGeneric,
 		"":                          ShapeGeneric,
