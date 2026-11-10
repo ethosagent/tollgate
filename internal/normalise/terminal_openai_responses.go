@@ -72,30 +72,32 @@ func (s *responsesSplicer) Sent(event string, data []byte) {
 	}
 }
 
+// Recovery shifts the output_index of a recovery frame by the offset and
+// changes nothing else in it (see shiftTopInt); a frame without one passes on
+// unchanged.
 func (s *responsesSplicer) Recovery(raw []byte, event string, data []byte) ([]byte, bool) {
-	var m map[string]json.RawMessage
 	if event == "response.created" || event == "response.in_progress" ||
 		bytes.HasPrefix(data, []byte(`{"type":"response.created"`)) || bytes.HasPrefix(data, []byte(`{"type":"response.in_progress"`)) {
 		return nil, false
 	}
-	var idx int
-	if json.Unmarshal(data, &m) != nil || m["output_index"] == nil || json.Unmarshal(m["output_index"], &idx) != nil {
+	out, idx, ok := shiftTopInt(raw, data, "output_index", s.offset)
+	if !ok {
 		return raw, true
 	}
-	idx += s.offset
-	m["output_index"] = json.RawMessage(itoa(idx))
-	out, err := json.Marshal(m)
-	if err != nil {
-		return raw, true
-	}
-	var typ string
-	_ = json.Unmarshal(m["type"], &typ)
-	if typ == "response.output_item.added" {
+	if responsesType(event, data) == "response.output_item.added" {
 		s.next = max(s.next, idx+1)
 	}
-	head := "data: "
+	return out, true
+}
+
+// responsesType is the SSE event name, or the JSON "type" when there is none.
+func responsesType(event string, data []byte) string {
 	if event != "" {
-		head = "event: " + event + "\ndata: "
+		return event
 	}
-	return append(append([]byte(head), out...), '\n', '\n'), true
+	var e struct {
+		Type string `json:"type"`
+	}
+	_ = json.Unmarshal(data, &e)
+	return e.Type
 }

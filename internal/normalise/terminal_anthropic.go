@@ -65,22 +65,16 @@ func (s *anthropicSplicer) Recovery(raw []byte, event string, data []byte) ([]by
 	return raw, true
 }
 
-// shift rewrites the index of a content block frame by the recovery offset.
-// A frame it cannot decode is passed on unchanged.
+// shift rewrites the index of a content block frame by the recovery offset,
+// leaving every other byte as the upstream wrote it. A frame it cannot read is
+// passed on unchanged.
 func (s *anthropicSplicer) shift(raw []byte, typ string, data []byte) []byte {
-	var m map[string]json.RawMessage
-	var idx int
-	if json.Unmarshal(data, &m) != nil || json.Unmarshal(m["index"], &idx) != nil {
-		return raw
-	}
-	idx += s.offset
-	m["index"] = json.RawMessage(itoa(idx))
-	out, err := json.Marshal(m)
-	if err != nil {
+	out, idx, ok := shiftTopInt(raw, data, "index", s.offset)
+	if !ok {
 		return raw
 	}
 	if typ == "content_block_start" {
 		s.next = max(s.next, idx+1)
 	}
-	return append(append([]byte("event: "+typ+"\ndata: "), out...), '\n', '\n')
+	return out
 }
