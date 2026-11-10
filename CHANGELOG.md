@@ -21,9 +21,6 @@ All notable changes to tollgate. The format follows
 - `Metric.ShortCircuited` and `Metric.ShortCircuitedBy` (the hook's `Name`):
   set when a Before hook answered with a Response. Status and Finish are
   unchanged.
-- Changed: a short-circuiting Before hook's `Call.Meta` is now adopted, so
-  `After` sees what the hook recorded. The rest of that hook's call copy is
-  still discarded. Hooks that never wrote Meta on a short-circuit are unaffected.
 - `Options.Transport` documents that a custom transport must set
   `DisableCompression` to keep tollgate transparent; the default already does.
 - **OpenAI Responses wire.** `POST /openai/v1/responses` (and
@@ -36,15 +33,19 @@ All notable changes to tollgate. The format follows
   ([ADR 0018](docs/decisions/0018-openai-responses-wire.md)).
 - Public API: `WireOpenAIResponses` and the `Call.Meta` keys
   `MetaPreviousResponseID`, `MetaReasoningEffort`, `MetaReasoningSummary`.
-- `testkit` fixtures `openai/responses`, `openai/responses-stream-{text,tools,reasoning,error}`
-  and requests `openai/request-responses-{stream,tools}`; `testkit.Run` drives
-  hooks and Finalizers through them.
-
+- `testkit` fixtures: `openai/responses`,
+  `openai/responses-stream-{text,tools,reasoning,error,failed,incomplete,custom-tool}`,
+  requests `openai/request-responses-{stream,tools,custom}`, and
+  `anthropic/messages-cache`, `anthropic/messages-stream-cache` (cache-write
+  usage); `testkit.Run` drives hooks and Finalizers through them.
 - Custom tool calls (Codex apply_patch) and local shell calls are normalised
   into tool calls and `RoleTool` messages, in requests and streams.
 
 ### Changed
 
+- A short-circuiting Before hook's `Call.Meta` is now adopted, so `After` sees what
+  the hook recorded. The rest of that hook's call copy is still discarded. Hooks
+  that never wrote Meta on a short-circuit are unaffected.
 - A Finalizer on a Responses stream sees the terminal region at
   `response.completed|incomplete|failed`, and a recovery stream is spliced by
   dropping its `response.created`/`in_progress` and shifting `output_index`.
@@ -56,6 +57,12 @@ All notable changes to tollgate. The format follows
 
 ### Fixed
 
+- A recovered stream (a Finalizer's Recover) reaches the client byte for byte: the
+  Responses and Anthropic splicers rewrite only the `output_index` / `index` digits
+  instead of re-serialising the frame (which reordered keys and escaped `<`, `>`,
+  `&`). The Anthropic splicer had this defect in v0.1.0.
+- The error frame after a cut also starts on its own frame when the response goes
+  through the held (OnResponse) or usage-copy writers.
 - A stream cut mid-frame now gets the break that closes the open frame before the
   injected error event, instead of a garbled frame.
 - A Responses stream's injected error is `event: error` with
