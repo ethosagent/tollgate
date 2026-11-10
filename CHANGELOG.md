@@ -7,7 +7,7 @@ All notable changes to tollgate. The format follows
 
 ## [Unreleased]
 
-## [0.2.0] - not yet tagged
+## [0.2.0] - 2026-11-10
 
 ### Added
 
