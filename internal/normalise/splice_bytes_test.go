@@ -95,14 +95,14 @@ func TestSplicer_FallsBackToReserialisingWhenTheIndexIsNotPatchable(t *testing.T
 			ev2, data2 := SplitFrame([]byte(strings.TrimRight(string(out), "\r\n")))
 			dec := json.NewDecoder(strings.NewReader(string(data2)))
 			dec.UseNumber()
-			var any map[string]any
-			if err := dec.Decode(&any); err != nil {
+			var doc map[string]any
+			if err := dec.Decode(&doc); err != nil {
 				t.Fatalf("out %q is not JSON: %v", out, err)
 			}
-			got, ok := any[tt.key].(json.Number)
+			got, ok := doc[tt.key].(json.Number)
 			want := int64(tt.start) + 3
 			if n, err := got.Int64(); !ok || err != nil || n != want {
-				t.Fatalf("%s = %v in %q, want %d (event %q)", tt.key, any[tt.key], out, want, ev2)
+				t.Fatalf("%s = %v in %q, want %d (event %q)", tt.key, doc[tt.key], out, want, ev2)
 			}
 		})
 	}
