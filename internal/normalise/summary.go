@@ -2,12 +2,9 @@ package normalise
 
 import (
 	"encoding/json"
-	"strconv"
 
 	"github.com/ethosagent/tollgate/internal/model"
 )
-
-func itoa(i int) []byte { return strconv.AppendInt(nil, int64(i), 10) }
 
 // Summarizer builds the model.StreamSummary a Finalizer decides on from the
 // frames of one upstream response, through the wire's EventMapper. Like the

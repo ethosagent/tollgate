@@ -42,13 +42,7 @@ func topIntSpan(d []byte, key string) (start, end, val int, ok bool) {
 		case '}', ']':
 			depth--
 		case '"':
-			j := i + 1
-			for j < len(d) && d[j] != '"' {
-				if d[j] == '\\' {
-					j++
-				}
-				j++
-			}
+			j := endOfString(d, i)
 			if j >= len(d) {
 				return 0, 0, 0, false
 			}
@@ -89,4 +83,17 @@ func skipSpace(d []byte, i int) int {
 		i++
 	}
 	return i
+}
+
+// endOfString returns the index of the quote that closes the string opened at
+// d[i], or len(d) when it never closes.
+func endOfString(d []byte, i int) int {
+	j := i + 1
+	for j < len(d) && d[j] != '"' {
+		if d[j] == '\\' {
+			j++
+		}
+		j++
+	}
+	return j
 }
