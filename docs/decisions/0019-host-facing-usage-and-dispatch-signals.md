@@ -1,4 +1,4 @@
-# 0019. Cache-write tokens on Usage and a Dispatched flag on Metric
+# 0019. Cache-write tokens on Usage, Dispatched and ShortCircuited on Metric
 
 - **Status:** Proposed
 - **Date:** 2026-11-10
@@ -6,7 +6,7 @@
 
 ## Context
 
-Three gaps showed up when a host costs and audits calls from tollgate's `Metric`.
+Four gaps showed up when a host costs and audits calls from tollgate's `Metric`.
 
 1. Anthropic's `input_tokens` excludes prompt-cache writes
    (`cache_creation_input_tokens`), which are billed at a premium. tollgate
@@ -16,6 +16,8 @@ Three gaps showed up when a host costs and audits calls from tollgate's `Metric`
    before the upstream": a Before hook may also reject. A host that must not
    bill or alert on a refusal could not tell it from a dispatched call.
 3. A verifier saw `Accept-Encoding: gzip` upstream and attributed it to tollgate.
+4. A hook that short-circuits from Before lost the `Call.Meta` it wrote, and
+   the Metric did not say a hook had answered.
 
 ## Decision
 
@@ -32,7 +34,15 @@ Three gaps showed up when a host costs and audits calls from tollgate's `Metric`
    Alternative rejected: a new `Finish` value, because adding or splitting a
    value breaks consumers that switch on `Finish` and loses the reason
    (`FinishUpstreamError` vs refused) the other way round.
-3. No transport change for Accept-Encoding. `forward.NewTransport` sets
+3. A Before hook that short-circuits keeps its `Call.Meta` (D1): the chain
+   adopts that map, and nothing else from the hook's copy, because the call
+   goes nowhere upstream and a failed or late hook must still change nothing.
+   Meterwise monitors use it to record the rule that fired for `After`.
+   `Metric` gains `ShortCircuited bool` and `ShortCircuitedBy string` (D2);
+   Status and Finish keep their meaning. A hook that wrote Meta and returned a
+   Response used to lose it, so no working hook depended on that.
+   `chain.BeforeNamed` returns the hook name; `Before` is unchanged.
+4. No transport change for Accept-Encoding. `forward.NewTransport` sets
    `DisableCompression`, so the default never adds the header and never
    decodes a body; `TestProxy_AcceptEncodingIsTheClients` pins it end to end.
    The header a probe sees comes from Go's own `http.Client`, or from a host
@@ -47,4 +57,5 @@ Three gaps showed up when a host costs and audits calls from tollgate's `Metric`
   `CachedInputTokens`; they must not add it to `InputTokens`.
 - Release: minor (v0.2.0), together with ADR 0018.
 - Enforced by `TestAnthropicUsage_CacheWriteTokens`,
-  `TestProxy_OneMetricPerCall`, `TestProxy_MetricDispatchedSignalsAnUpstreamAttempt`.
+  `TestProxy_OneMetricPerCall`, `TestProxy_MetricDispatchedSignalsAnUpstreamAttempt`,
+  `TestBefore_ShortCircuitAdoptsMetaAndNamesTheHook`, `TestProxy_ShortCircuitReachesAfterWithMetaAndMetric`.

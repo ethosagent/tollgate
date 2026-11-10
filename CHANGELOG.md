@@ -18,6 +18,12 @@ All notable changes to tollgate. The format follows
 - `Metric.Dispatched`: true when the upstream request was attempted, false for
   a refusal before it (auth, admission, resolver, target, body, Before
   short-circuit). `Finish` is unchanged.
+- `Metric.ShortCircuited` and `Metric.ShortCircuitedBy` (the hook's `Name`):
+  set when a Before hook answered with a Response. Status and Finish are
+  unchanged.
+- Changed: a short-circuiting Before hook's `Call.Meta` is now adopted, so
+  `After` sees what the hook recorded. The rest of that hook's call copy is
+  still discarded. Hooks that never wrote Meta on a short-circuit are unaffected.
 - `Options.Transport` documents that a custom transport must set
   `DisableCompression` to keep tollgate transparent; the default already does.
 - **OpenAI Responses wire.** `POST /openai/v1/responses` (and

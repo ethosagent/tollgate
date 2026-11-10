@@ -32,7 +32,8 @@ type hookStats struct {
 func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 	wire, hooked := p.parseCall(r.Context(), o)
 	if hooked {
-		if resp := o.chn.Before(r.Context(), o.call); resp != nil {
+		if resp, by := o.chn.BeforeNamed(r.Context(), o.call); resp != nil {
+			o.short, o.shortBy = true, by
 			p.shortCircuit(o, resp)
 			return
 		}

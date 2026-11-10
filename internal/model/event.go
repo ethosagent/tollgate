@@ -80,8 +80,14 @@ type Metric struct {
 	// Finish is unchanged; FinishRejected can be either (a Before hook may
 	// also reject), so hosts that must not bill a refusal test Dispatched.
 	Dispatched bool
-	Usage      Usage
-	Start      time.Time
-	TTFB       time.Duration
-	Duration   time.Duration
+	// ShortCircuited is true when a Before hook answered the call with a
+	// Response, and ShortCircuitedBy is that hook's Name. Status and Finish
+	// are as before (Finish is FinishRejected when the Response status is
+	// 400 or more); the upstream was not called, so Dispatched is false.
+	ShortCircuited   bool
+	ShortCircuitedBy string
+	Usage            Usage
+	Start            time.Time
+	TTFB             time.Duration
+	Duration         time.Duration
 }

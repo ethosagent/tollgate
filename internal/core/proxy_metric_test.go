@@ -141,3 +141,34 @@ func TestProxy_MetricDispatchedSignalsAnUpstreamAttempt(t *testing.T) {
 		t.Fatalf("resolver refusal metric = %+v, want rejected 404, not dispatched", m)
 	}
 }
+
+// TestProxy_ShortCircuitReachesAfterWithMetaAndMetric: Meta a short-circuiting
+// Before hook wrote reaches After, and the Metric says which hook answered.
+// Other calls leave the fields zero.
+func TestProxy_ShortCircuitReachesAfterWithMetaAndMetric(t *testing.T) {
+	type seen struct {
+		meta any
+		m    model.Metric
+	}
+	got := make(chan seen, 2)
+	gate := &tHook{name: "loop-monitor", before: func(_ context.Context, c *model.Call) (*model.Response, error) {
+		if c.Meta == nil {
+			c.Meta = map[string]any{}
+		}
+		c.Meta["monitor.rule"] = "loop"
+		return &model.Response{Status: 429, Body: []byte("no")}, nil
+	}}
+	obs := &tHook{name: "obs", after: func(_ context.Context, c *model.Call, m model.Metric) { got <- seen{c.Meta["monitor.rule"], m} }}
+	up := newFakeUpstream(t, upstreamOptions{})
+	base, rec, _ := metricProxy(t, core.Options{}, gate, obs)
+	_ = readAll(t, post(t, base, chatPath, []byte(plainRequest), via(up)))
+	s := <-got
+	if s.meta != "loop" || !s.m.ShortCircuited || s.m.ShortCircuitedBy != "loop-monitor" || s.m.Dispatched ||
+		s.m.Status != 429 || s.m.Finish != model.FinishRejected {
+		t.Fatalf("after saw meta=%v metric=%+v", s.meta, s.m)
+	}
+	eventually(t, "the sink Metric", func() bool { return len(rec.all()) == 1 })
+	if m := rec.all()[0]; m != s.m {
+		t.Fatalf("sink %+v != After %+v", m, s.m)
+	}
+}

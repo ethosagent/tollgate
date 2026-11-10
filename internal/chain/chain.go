@@ -84,31 +84,44 @@ func (c *Chain) Has(s Stage) bool { return len(c.by[s]) > 0 }
 // private copy (cloneCall) that is adopted only if the hook returns in time
 // without error or panic, so a failed hook, or a cancelled one that returns
 // late, cannot change the call. A hook that returns a Response ends the chain
-// and that Response is returned: the upstream is never called. Each hook gets
+// and that Response is returned: the upstream is never called. Of that hook's
+// copy only Meta is adopted, so what it recorded reaches After. Each hook gets
 // Limits.Hook, all of them Limits.Total. A failing hook is logged and skipped.
 func (c *Chain) Before(ctx context.Context, call *model.Call) *model.Response {
+	resp, _ := c.BeforeNamed(ctx, call)
+	return resp
+}
+
+// BeforeNamed is Before that also returns the Name of the hook whose Response
+// ended the chain ("" when none did).
+func (c *Chain) BeforeNamed(ctx context.Context, call *model.Call) (resp *model.Response, by string) {
 	type out struct {
 		call model.Call
 		resp *model.Response
+		by   string
 	}
-	var resp *model.Response
 	run(ctx, c, StageBefore, idsOf(call), c.lim.Hook, c.lim.Total,
 		func(h model.Hook) func(context.Context) (out, error) {
 			cp := cloneCall(call) // here, on the caller: the hook's goroutine never reads call
 			return func(ctx context.Context) (out, error) {
 				r, err := h.Before(ctx, &cp)
-				return out{cp, r}, err
+				o := out{call: cp, resp: r}
+				if r != nil && err == nil {
+					o.by = h.Name()
+				}
+				return o, err
 			}
 		},
 		func(o out) bool {
 			if o.resp != nil {
-				resp = o.resp
+				resp, by = o.resp, o.by
+				call.Meta = o.call.Meta
 				return true
 			}
 			*call = o.call
 			return false
 		})
-	return resp
+	return resp, by
 }
 
 // OnResponse runs Hook.OnResponse in order over a buffered stream:false

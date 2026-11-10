@@ -25,6 +25,8 @@ type outcome struct {
 	provider   string
 	status     int
 	finish     model.Finish
+	shortBy    string // the Before hook that answered, "" if none
+	short      bool
 	dispatched bool                 // relay ran: the upstream request was attempted
 	chn        *chain.Chain         // the hooks of this call: later Use calls do not join it
 	call       *model.Call          // never nil: ID and Path at once, the rest as the pipeline learns it
@@ -85,7 +87,7 @@ func (p *Proxy) wantsUsage(chn *chain.Chain) bool {
 func (o *outcome) metric(d time.Duration) model.Metric {
 	c := o.call
 	m := model.Metric{CallID: o.callID, TenantID: o.tenant, SessionID: c.Session.ID, Provider: o.provider,
-		Model: c.Model, Stream: c.Stream, Status: o.status, Finish: o.finish, Dispatched: o.dispatched, Usage: o.usage,
+		Model: c.Model, Stream: c.Stream, Status: o.status, Finish: o.finish, Dispatched: o.dispatched, ShortCircuited: o.short, ShortCircuitedBy: o.shortBy, Usage: o.usage,
 		Start: o.start, Duration: d}
 	switch {
 	case o.final != nil: // the barrier saw every upstream response, discarded terminals included

@@ -251,3 +251,33 @@ func TestWithin_ReturnsResultErrorAndTimeout(t *testing.T) {
 		}
 	})
 }
+
+// A short-circuiting hook keeps only its Meta: the rest of its call copy is
+// dropped (the upstream is never called), and BeforeNamed says who answered.
+func TestBefore_ShortCircuitAdoptsMetaAndNamesTheHook(t *testing.T) {
+	log, _ := newLogger()
+	stop := &model.Response{Status: 429, Body: []byte("stop")}
+	gate := &hook{name: "gate", before: func(_ context.Context, c *model.Call) (*model.Response, error) {
+		c.Meta["monitor"] = "loop"
+		c.Body = []byte("rewritten")
+		return stop, nil
+	}}
+	ch := New([]model.Hook{&hook{name: "first", before: func(_ context.Context, c *model.Call) (*model.Response, error) {
+		c.Meta = map[string]any{"seen": true}
+		return nil, nil
+	}}, gate}, log, testLimits)
+	call := newCall("orig")
+	resp, by := ch.BeforeNamed(context.Background(), call)
+	if resp != stop || by != "gate" {
+		t.Fatalf("resp=%v by=%q, want the gate's response and name", resp, by)
+	}
+	if call.Meta["monitor"] != "loop" || call.Meta["seen"] != true {
+		t.Fatalf("Meta = %v, want the earlier hook's and the short-circuiting hook's keys", call.Meta)
+	}
+	if string(call.Body) != "orig" {
+		t.Fatalf("body = %q, want the call's other fields untouched", call.Body)
+	}
+	if _, by := New(nil, log, testLimits).BeforeNamed(context.Background(), newCall("x")); by != "" {
+		t.Fatalf("by = %q with no short-circuit", by)
+	}
+}
