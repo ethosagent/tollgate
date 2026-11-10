@@ -7,8 +7,19 @@ All notable changes to tollgate. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - not yet tagged
+
 ### Added
 
+- `Usage.CacheWriteInputTokens`: Anthropic `cache_creation_input_tokens`
+  (streamed and buffered), which `input_tokens` excludes. 0 on the OpenAI
+  wires. Not yet exported by the Prometheus registry or the stdout and
+  Postgres sinks ([ADR 0019](docs/decisions/0019-host-facing-usage-and-dispatch-signals.md)).
+- `Metric.Dispatched`: true when the upstream request was attempted, false for
+  a refusal before it (auth, admission, resolver, target, body, Before
+  short-circuit). `Finish` is unchanged.
+- `Options.Transport` documents that a custom transport must set
+  `DisableCompression` to keep tollgate transparent; the default already does.
 - **OpenAI Responses wire.** `POST /openai/v1/responses` (and
   `/openrouter/v1/responses`), streamed and not, is now normalised into the
   neutral model instead of being read as chat: `instructions`, `input` items,
