@@ -4,7 +4,7 @@ go 1.26
 
 require (
 	github.com/ethosagent/tollgate v0.1.0
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 )
 
 require (
