@@ -88,8 +88,16 @@ type Metric struct {
 	// 400 or more); the upstream was not called, so Dispatched is false.
 	ShortCircuited   bool
 	ShortCircuitedBy string
-	Usage            Usage
-	Start            time.Time
-	TTFB             time.Duration
-	Duration         time.Duration
+	// Fallback is true when the upstream refused the body a Before hook
+	// produced with a status in Options.FallbackStatuses and the proxy
+	// resent the client's original body instead (ADR 0020);
+	// FallbackFromStatus is that refused status, 0 when there was no
+	// fallback. Status, Finish and Usage describe the response the client
+	// got: the resend's.
+	Fallback           bool
+	FallbackFromStatus int
+	Usage              Usage
+	Start              time.Time
+	TTFB               time.Duration
+	Duration           time.Duration
 }

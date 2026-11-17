@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
@@ -32,12 +33,16 @@ type hookStats struct {
 func (p *Proxy) serveCall(r *http.Request, o *outcome, req forward.Request) {
 	wire, hooked := p.parseCall(r.Context(), o)
 	if hooked {
+		original := o.call.Body // each hook gets a clone: these bytes stay as received
 		if resp, by := o.chn.BeforeNamed(r.Context(), o.call); resp != nil {
 			o.short, o.shortBy = true, by
 			p.shortCircuit(o, resp)
 			return
 		}
 		req.Header, req.Body = o.call.Header, o.call.Body
+		if len(p.opts.FallbackStatuses) > 0 && !bytes.Equal(original, req.Body) {
+			req.FallbackBody, req.FallbackOn = original, p.opts.FallbackStatuses // ADR 0020
+		}
 	}
 	var held *forward.Capture
 	var cp *forward.BodyCopy

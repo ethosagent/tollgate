@@ -171,7 +171,7 @@ func (p *Proxy) relay(body http.ResponseWriter, r *http.Request, o *outcome, req
 	} else if res.Status != 0 {
 		o.status = res.Status
 	}
-	o.finish = res.Finish
+	o.finish, o.fellBack = res.Finish, res.FallbackFrom
 	if o.final = res.Final; o.final != nil && o.final.Unheld {
 		p.stats.unheld.Add(1)
 	}
