@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/ethosagent/tollgate/internal/model"
@@ -31,6 +32,7 @@ type Options struct {
 	Headers                  HeaderNames
 	MeasureSessionPrediction bool
 	DisablePrivacyMode       bool
+	FallbackStatuses         []int
 }
 
 // Limits is the core's copy of tollgate.Limits: same fields, same order.
@@ -130,6 +132,7 @@ func (o Options) withDefaults() Options {
 	if o.Providers == nil {
 		o.Providers = resolve.New(nil)
 	}
+	o.FallbackStatuses = slices.Clone(o.FallbackStatuses) // nil stays nil: off
 	return o
 }
 

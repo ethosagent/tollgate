@@ -102,6 +102,9 @@ func TestValidate(t *testing.T) {
 		{"reserved credential header", Options{Headers: HeaderNames{TenantKey: "Authorization"}}, "reserved"},
 		{"upstream key header reserved", Options{Headers: HeaderNames{Session: "x-api-key"}}, "reserved"},
 		{"nil finalizer", Options{Finalizers: []model.Finalizer{nil}}, "finalizers[0] is nil"},
+		{"fallback statuses in range", Options{FallbackStatuses: []int{400, 422, 599}}, ""},
+		{"fallback status below 400", Options{FallbackStatuses: []int{400, 200}}, "FallbackStatuses[1] = 200 is outside 400-599"},
+		{"fallback status above 599", Options{FallbackStatuses: []int{600}}, "FallbackStatuses[0] = 600 is outside 400-599"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -119,12 +122,27 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestOptions_FallbackOffByDefault: the zero value never resends, and the
+// configured list is copied, so a host changing its slice after New changes
+// nothing.
+func TestOptions_FallbackOffByDefault(t *testing.T) {
+	if got := (Options{}).withDefaults().FallbackStatuses; got != nil {
+		t.Fatalf("default FallbackStatuses = %v, want nil (off)", got)
+	}
+	host := []int{400}
+	o := Options{FallbackStatuses: host}.withDefaults()
+	host[0] = 500
+	if o.FallbackStatuses[0] != 400 {
+		t.Fatalf("FallbackStatuses aliases the host slice: %v", o.FallbackStatuses)
+	}
+}
+
 func TestValidate_ReportsAllProblemsAtOnce(t *testing.T) {
-	err := Options{Limits: Limits{MaxRequestBody: -1, EventBuffer: -1}}.Validate()
+	err := Options{Limits: Limits{MaxRequestBody: -1, EventBuffer: -1}, FallbackStatuses: []int{0, 1}}.Validate()
 	if err == nil {
 		t.Fatal("want error")
 	}
-	for _, want := range []string{"MaxRequestBody", "EventBuffer"} {
+	for _, want := range []string{"MaxRequestBody", "EventBuffer", "FallbackStatuses[0]", "FallbackStatuses[1]"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q is missing %q", err, want)
 		}

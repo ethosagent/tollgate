@@ -49,6 +49,17 @@ type Options struct {
 	// logs. Nothing reads this field yet: tollgate has no code path that logs
 	// those, so privacy mode is always on and setting it has no effect.
 	DisablePrivacyMode bool
+	// FallbackStatuses lists upstream statuses (each 400-599) on which a
+	// call whose body a Before hook changed is sent again, once, with the
+	// client's original body as tollgate received it, to the same upstream
+	// with the same headers; the client gets that second answer instead. It
+	// applies only before any byte of the refused response reaches the
+	// client; the refused body is discarded unlogged. An unchanged body is
+	// never resent, hooks do not run again, and a second refusal is relayed
+	// as it is. Metric.Fallback and Metric.FallbackFromStatus report it.
+	// tollgate does not interpret the refusal: the host picks the statuses
+	// (ADR 0020). Default: nil, off.
+	FallbackStatuses []int
 }
 
 // Limits bounds every call. A zero field takes its DefaultLimits value.
@@ -146,5 +157,6 @@ func (o Options) core() core.Options {
 		Headers:                  core.HeaderNames(o.Headers),
 		MeasureSessionPrediction: o.MeasureSessionPrediction,
 		DisablePrivacyMode:       o.DisablePrivacyMode,
+		FallbackStatuses:         o.FallbackStatuses,
 	}
 }

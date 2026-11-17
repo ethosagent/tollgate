@@ -42,7 +42,7 @@ func TestOptions_CoreCopiesEveryField(t *testing.T) {
 		Auth: NoAuth{}, Admission: Unlimited{}, Providers: noResolver{}, Sessions: noSessions{},
 		Metrics: DiscardSink{}, Finalizers: []Finalizer{nil}, Transport: http.DefaultTransport,
 		Logger: slog.New(slog.DiscardHandler), Limits: Limits{MaxSessions: 7}, Headers: HeaderNames{Session: "x-s"},
-		MeasureSessionPrediction: true, DisablePrivacyMode: true,
+		MeasureSessionPrediction: true, DisablePrivacyMode: true, FallbackStatuses: []int{400},
 	}
 	c := reflect.ValueOf(o.core())
 	for i := range c.NumField() {

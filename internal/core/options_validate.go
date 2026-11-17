@@ -27,6 +27,11 @@ func (o Options) Validate() error {
 			errs = append(errs, fmt.Errorf("finalizers[%d] is nil", i))
 		}
 	}
+	for i, s := range o.FallbackStatuses {
+		if s < 400 || s > 599 {
+			errs = append(errs, fmt.Errorf("fallback: FallbackStatuses[%d] = %d is outside 400-599", i, s))
+		}
+	}
 	return errors.Join(errs...) // nil entries are dropped
 }
 
