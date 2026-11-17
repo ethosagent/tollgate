@@ -65,6 +65,12 @@ type Request struct {
 	// its Decide has run (final.go). Nil means the terminal event is relayed
 	// like any other frame, with no added work.
 	Final *Finalize
+	// FallbackBody, if not nil, is the client's original body, sent once in
+	// place of Body when the upstream answers a status in FallbackOn
+	// (fallback.go, ADR 0020). The caller sets it only when a hook changed
+	// the body; nil (the default) never resends.
+	FallbackBody []byte
+	FallbackOn   []int
 }
 
 // Result is how a forwarded call ended.
@@ -78,6 +84,10 @@ type Result struct {
 	// Final is what the Finalizer barrier did, when the response went
 	// through it; nil otherwise.
 	Final *Finalized
+	// FallbackFrom is the refused status that made Forward resend the
+	// original body (Request.FallbackBody); 0 when it did not. Status is
+	// then the resend's.
+	FallbackFrom int
 }
 
 // Forward sends req upstream under ctx and relays the response to w
@@ -100,8 +110,14 @@ func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, r
 		return Result{Finish: model.FinishUpstreamError}, ErrUpstreamUnreachable
 	}
 	resp, err := rt.RoundTrip(out)
+	var from int
+	if err == nil {
+		resp, from, err = fallback(ctx, rt, req, resp)
+	}
 	if err != nil {
-		return failedBeforeBody(ctx, err)
+		res, err = failedBeforeBody(ctx, err)
+		res.FallbackFrom = from
+		return res, err
 	}
 	defer resp.Body.Close()
 	// Whatever ends the call (a limit, the client leaving) closes the body,
@@ -112,7 +128,9 @@ func Forward(ctx context.Context, rt http.RoundTripper, w http.ResponseWriter, r
 	if clock != nil {
 		src = &touchReader{resp.Body, clock}
 	}
-	return relayResponse(ctx, w, resp, src, req, relayEnv{rt: rt, clock: clock})
+	res, err = relayResponse(ctx, w, resp, src, req, relayEnv{rt: rt, clock: clock})
+	res.FallbackFrom = from
+	return res, err
 }
 
 // newUpstreamRequest builds the upstream request for body from req's target
