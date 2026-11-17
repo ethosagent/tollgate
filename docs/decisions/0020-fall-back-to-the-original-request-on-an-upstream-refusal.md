@@ -1,6 +1,6 @@
 # 0020. Fall back to the original request on an upstream refusal
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-11-17
 - **Source:** plan 001 (a host router's rewritten body refused with 400 by the upstream)
 

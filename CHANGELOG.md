@@ -7,6 +7,8 @@ All notable changes to tollgate. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-17
+
 ### Added
 
 - `Options.FallbackStatuses` (off by default): when a Before hook changed the
