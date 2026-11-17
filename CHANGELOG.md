@@ -7,6 +7,15 @@ All notable changes to tollgate. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `Options.FallbackStatuses` (off by default): when a Before hook changed the
+  request body and the upstream answers one of these statuses (400-599), the
+  refused response is discarded before any byte reaches the client and the
+  client's original body is sent once more, same upstream and headers; the
+  client gets that answer. `Metric.Fallback` and `Metric.FallbackFromStatus`
+  report it ([ADR 0020](docs/decisions/0020-fall-back-to-the-original-request-on-an-upstream-refusal.md)).
+
 ## [0.2.0] - 2026-11-10
 
 ### Added

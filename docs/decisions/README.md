@@ -25,5 +25,6 @@ Never edit an accepted ADR's decision; supersede it with a new one.
 | [0017](0017-go-work-for-nested-modules-no-replace-in-releases.md) | A committed go.work builds nested modules; releases carry no replace | Accepted |
 | [0018](0018-openai-responses-wire.md) | OpenAI Responses wire, chosen per request from the path | Proposed |
 | [0019](0019-host-facing-usage-and-dispatch-signals.md) | Cache-write tokens on Usage, Dispatched and ShortCircuited on Metric | Proposed |
+| [0020](0020-fall-back-to-the-original-request-on-an-upstream-refusal.md) | Fall back to the original request on an upstream refusal | Proposed |
 
 Template: [`template.md`](template.md).
